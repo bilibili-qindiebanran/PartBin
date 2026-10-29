@@ -3,6 +3,7 @@ import path from 'node:path';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
+import multipart from '@fastify/multipart';
 
 import { loadConfig } from './env.js';
 import { openDatabase } from './db/connection.js';
@@ -21,6 +22,8 @@ import itemRoutes from './routes/items.routes.js';
 import movementRoutes from './routes/movements.routes.js';
 import instanceRoutes from './routes/instances.routes.js';
 import loanRoutes from './routes/loans.routes.js';
+import photoRoutes from './routes/photos.routes.js';
+import transferRoutes from './routes/transfer.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -120,6 +123,14 @@ export async function buildApp(overrides = {}) {
   });
 
   await app.register(cookie);
+  await app.register(multipart, {
+    limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 10 },
+  });
+  app.addContentTypeParser(
+    'text/csv',
+    { parseAs: 'string', bodyLimit: 3 * 1024 * 1024 },
+    (request, body, done) => done(null, body),
+  );
   installAuth(app);
 
   await app.register(metaRoutes);
@@ -131,6 +142,8 @@ export async function buildApp(overrides = {}) {
   await app.register(movementRoutes);
   await app.register(instanceRoutes);
   await app.register(loanRoutes);
+  await app.register(photoRoutes);
+  await app.register(transferRoutes);
 
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
