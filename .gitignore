@@ -20,10 +20,14 @@ uploads/
 backups/
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 *.db
 *.db-shm
 *.db-wal
 *.db-journal
+*.pid
+*.local
 
 # ---------- 环境变量与密钥 ----------
 .env

@@ -12,6 +12,9 @@
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm --filter @partbin/web run build",
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/index.js",
-    "test": "pnpm --filter @partbin/server run test"
+    "test": "pnpm --filter @partbin/server run test",
+    "privacy:check": "node scripts/privacy-scan.js",
+    "release:check": "pnpm test && pnpm privacy:check",
+    "prepare": "git config core.hooksPath .githooks || true"
   }
 }

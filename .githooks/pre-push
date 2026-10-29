@@ -1,0 +1,5 @@
+#!/bin/sh
+# 阻止包含隐私内容的推送；安装方式：git config core.hooksPath .githooks
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+exec node scripts/privacy-scan.js

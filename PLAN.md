@@ -2210,7 +2210,17 @@ sudo -u partbin bash -c 'set -a; . /etc/partbin/env; set +a; \
 
 ### 15.2 交付节奏
 
-M1 已完成（内网可用）。后续顺序：**M2 → M3 → M4 → M5** 打通完整业务，然后 **M6 安全加固**、**M7 生产化**、**M8 公网部署**。M6 与 M8 完成前，代码与数据只能在内网使用，禁止直接暴露公网。每个里程碑结束后附：改动清单、测试结果、启动方式、下一步。
+M1 已完成（内网可用）。后续顺序：**M2 → M3 → M4 → M5** 打通完整业务，然后 **M6 安全加固**、**M7 生产化**、**M8 公网部署**。M6 与 M8 完成前，代码与数据只能在内网使用，禁止直接暴露公网。每个里程碑结束后附：改动清单、测试结果、启动方式、下一步，并按 15.3 提交推送。
+
+### 15.3 Git 提交与发布规则
+
+- **关键节点自动上传**：里程碑完成、设计文档评审通过、安全修复完成、部署前，提交并推送到 `origin/main`（`git@github.com:bilibili-qindiebanran/PartBin.git`）。
+- **上传前必须通过隐私检查**：`pnpm privacy:check`（等价于 `.githooks/pre-push`）；失败时禁止提交/推送。检查覆盖数据目录、`.env`、数据库、依赖与构建产物、私钥、个人邮箱、个人绝对路径与常见令牌格式。
+- **禁止提交**：`data/`、`*.db`、`uploads/`、`backups/`、`.env`（仅允许 `.env.example`）、日志、含个人信息的截图/导出、真实密钥。
+- **Commit message**：中文、简洁、`type: 概述`（`feat` / `fix` / `docs` / `chore` / `refactor` / `test`），一次提交只做一件事。
+- **不改写已推送历史**：不 force push、不 rebase；推送后核对 `git status` 与远端 HEAD。
+- **提交身份**：使用仓库本地配置，不把个人邮箱写入提交；不使用 `--author` 注入真实邮箱。
+- 详细约束与执行步骤见 `AGENTS.md`，实现见 `scripts/privacy-scan.js` 与 `.githooks/pre-push`。
 
 ---
 
