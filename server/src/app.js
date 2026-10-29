@@ -19,6 +19,8 @@ import categoryRoutes from './routes/categories.routes.js';
 import locationRoutes from './routes/locations.routes.js';
 import itemRoutes from './routes/items.routes.js';
 import movementRoutes from './routes/movements.routes.js';
+import instanceRoutes from './routes/instances.routes.js';
+import loanRoutes from './routes/loans.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -127,6 +129,8 @@ export async function buildApp(overrides = {}) {
   await app.register(locationRoutes);
   await app.register(itemRoutes);
   await app.register(movementRoutes);
+  await app.register(instanceRoutes);
+  await app.register(loanRoutes);
 
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
