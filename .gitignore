@@ -1,0 +1,52 @@
+# ---------- 依赖 ----------
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+pnpm-debug.log*
+
+# ---------- 构建产物 ----------
+dist/
+web/dist/
+.vite/
+**/.vite/
+**/.vite-temp/
+*.tsbuildinfo
+
+# ---------- 运行时数据（SQLite 数据库、照片、备份）----------
+data/
+server/.tmp/
+uploads/
+backups/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# ---------- 环境变量与密钥 ----------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ---------- 日志与测试覆盖率 ----------
+*.log
+logs/
+coverage/
+.nyc_output/
+.cache/
+
+# ---------- 编辑器 / 操作系统 ----------
+.DS_Store
+**/.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

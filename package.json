@@ -1,0 +1,17 @@
+{
+  "name": "partbin",
+  "version": "0.1.0",
+  "description": "PartBin · 硬件出入库系统",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm --filter @partbin/web run build",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/index.js",
+    "test": "pnpm --filter @partbin/server run test"
+  }
+}

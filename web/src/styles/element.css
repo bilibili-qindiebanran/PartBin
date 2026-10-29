@@ -1,0 +1,81 @@
+:root {
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: #3b9797;
+  --el-color-primary-light-5: #6fb3b3;
+  --el-color-primary-light-7: #a3d0d0;
+  --el-color-primary-light-8: #bcdcdc;
+  --el-color-primary-light-9: var(--primary-soft);
+  --el-color-primary-dark-2: var(--primary-hover);
+
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-error: var(--danger);
+
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-font-size-base: 14px;
+  --el-text-color-primary: var(--ink-900);
+  --el-text-color-regular: var(--ink-600);
+  --el-text-color-secondary: var(--ink-400);
+  --el-border-color: var(--line);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: rgba(15, 23, 42, 0.06);
+  --el-fill-color-light: #f8fbfb;
+  --el-fill-color-blank: #ffffff;
+  --el-bg-color: #ffffff;
+  --el-box-shadow-light: var(--shadow-2);
+}
+
+.el-button {
+  font-weight: 500;
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--primary);
+  --el-button-border-color: var(--primary);
+  --el-button-hover-bg-color: var(--primary-hover);
+  --el-button-hover-border-color: var(--primary-hover);
+  --el-button-active-bg-color: var(--primary-hover);
+  --el-button-active-border-color: var(--primary-hover);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--r-sm);
+}
+
+.el-dialog {
+  border-radius: var(--r-xl);
+}
+
+.el-card {
+  border-radius: var(--r-lg);
+  border-color: var(--line);
+  box-shadow: var(--shadow-1);
+}
+
+.el-table {
+  --el-table-header-bg-color: #f8fbfb;
+  --el-table-border-color: var(--line);
+  --el-table-row-hover-bg-color: #f3fbfa;
+  border-radius: var(--r-md);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+  color: var(--ink-600);
+}
+
+.el-tag {
+  border-radius: var(--r-pill);
+}
+
+.el-message {
+  border-radius: var(--r-pill);
+}
+
+.el-message-box {
+  border-radius: var(--r-xl);
+}
