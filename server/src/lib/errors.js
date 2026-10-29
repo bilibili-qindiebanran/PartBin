@@ -30,6 +30,9 @@ export const ERROR = {
   treeCycle: () => new AppError('TREE_CYCLE', 409, '不能把节点移动到自己的子节点下'),
   insufficientStock: (message = '库存不足', details = null) =>
     new AppError('INSUFFICIENT_STOCK', 409, message, details),
+  payloadTooLarge: (message = '文件过大') => new AppError('PAYLOAD_TOO_LARGE', 413, message),
+  unsupportedMedia: (message = '不支持的文件类型') =>
+    new AppError('UNSUPPORTED_MEDIA', 415, message),
   lastAdmin: () => new AppError('LAST_ADMIN', 409, '至少保留一个启用状态的管理员'),
   cannotDisableSelf: () => new AppError('CANNOT_DISABLE_SELF', 409, '不能禁用自己'),
   rateLimited: (message = '操作太频繁，请稍后再试', retryAfter = 60) =>

@@ -48,3 +48,23 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
 
   return data;
 }
+
+/** multipart 上传；其余行为与 api() 一致 */
+export async function apiUpload(path, formData) {
+  let response;
+  try {
+    response = await fetch(path, { method: 'POST', body: formData, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('网络不可用，请检查与服务器的连接', { code: 'NETWORK', status: 0 });
+  }
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(data?.error?.message || `请求失败（${response.status}）`, {
+      code: data?.error?.code,
+      status: response.status,
+      details: data?.error?.details,
+    });
+  }
+  return data;
+}

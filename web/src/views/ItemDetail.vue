@@ -113,15 +113,43 @@
           </article>
 
           <article class="card panel">
-            <h3>照片</h3>
-            <p class="note">照片上传将在 M5 接入；当前数量以流水为准。</p>
-          </article>
-
-          <article v-if="item.trackingMode === 'instance'" class="card panel">
-            <h3>实例</h3>
-            <p class="note">
-              已有 {{ item.instanceCount }} 个实例；实例登记、借出与归还在 M4 接入。
+            <header class="photo-head">
+              <h3>照片</h3>
+              <el-button
+                v-if="auth.canWrite"
+                text
+                size="small"
+                :loading="uploading"
+                @click="photoInput?.click()"
+              >
+                上传
+              </el-button>
+            </header>
+            <input
+              ref="photoInput"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              class="hidden-input"
+              @change="onPhotoSelected"
+            />
+            <p v-if="item.photos.length === 0" class="note">
+              还没有照片。上传时会自动压缩到最长边 1600px。
             </p>
+            <div v-else class="photo-grid">
+              <div v-for="photo in item.photos" :key="photo.id" class="photo-item">
+                <img :src="`/api/photos/${photo.id}`" :alt="item.name" loading="lazy" />
+                <el-button
+                  v-if="auth.canWrite"
+                  class="photo-remove"
+                  circle
+                  size="small"
+                  @click="removePhoto(photo)"
+                >
+                  ×
+                </el-button>
+              </div>
+            </div>
           </article>
         </div>
       </section>
@@ -286,7 +314,8 @@ import MovementDialog from '@/components/MovementDialog.vue';
 import BorrowDialog from '@/components/BorrowDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
-import { api } from '@/api/client';
+import { api, apiUpload } from '@/api/client';
+import { compressImage } from '@/lib/photo';
 import { formatDate, formatMoney } from '@/lib/format';
 
 const route = useRoute();
@@ -309,6 +338,8 @@ const loadingMovements = ref(false);
 const instances = ref([]);
 const borrowVisible = ref(false);
 const batch = reactive({ visible: false, saving: false, count: 1, prefix: '', startAt: 1 });
+const photoInput = ref(null);
+const uploading = ref(false);
 
 const STATUS_META = {
   in_stock: { label: '在库', type: 'success' },
@@ -485,6 +516,46 @@ async function changeStatus(instance, status) {
 async function handleBorrowSaved() {
   borrowVisible.value = false;
   await load();
+}
+
+async function onPhotoSelected(event) {
+  const selected = event.target.files?.[0];
+  event.target.value = '';
+  if (!selected) return;
+
+  uploading.value = true;
+  try {
+    const blob = await compressImage(selected);
+    const formData = new FormData();
+    formData.append('file', blob, 'photo.jpg');
+    const data = await apiUpload('/api/photos', formData);
+    const photoIds = [...item.value.photos.map((photo) => photo.id), data.photo.id];
+    await api(`/api/items/${item.value.id}/photos`, {
+      method: 'PUT',
+      body: { photoIds },
+    });
+    await load();
+    ElMessage.success('照片已上传');
+  } catch (requestError) {
+    ElMessage.error(requestError.message || '上传失败');
+  } finally {
+    uploading.value = false;
+  }
+}
+
+async function removePhoto(photo) {
+  try {
+    const photoIds = item.value.photos
+      .filter((entry) => entry.id !== photo.id)
+      .map((entry) => entry.id);
+    await api(`/api/items/${item.value.id}/photos`, {
+      method: 'PUT',
+      body: { photoIds },
+    });
+    await load();
+  } catch (requestError) {
+    ElMessage.error(requestError.message || '删除照片失败');
+  }
 }
 
 watch(
@@ -668,6 +739,48 @@ onMounted(async () => {
 
 .instances {
   margin-top: var(--space-4);
+}
+
+.photo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.photo-head h3 {
+  margin-bottom: 0;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.photo-item {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: #f3f7f7;
+}
+
+.photo-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0.85;
 }
 
 .instances__table {

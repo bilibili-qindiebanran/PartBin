@@ -139,6 +139,16 @@
         </header>
         <TaxonomyManager kind="locations" />
       </article>
+
+      <article class="card panel panel--wide">
+        <header class="panel__head">
+          <div>
+            <h3>数据导入导出</h3>
+            <p class="panel__sub">导出备份；CSV 导入先预览、确认后才写入。</p>
+          </div>
+        </header>
+        <DataTransferCard :can-write="isAdmin" />
+      </article>
     </section>
 
     <el-dialog
@@ -174,6 +184,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { Key, UserFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import TaxonomyManager from '@/components/TaxonomyManager.vue';
+import DataTransferCard from '@/components/DataTransferCard.vue';
 import { api } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 
