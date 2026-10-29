@@ -119,6 +119,26 @@
           </el-table>
         </div>
       </article>
+
+      <article v-if="isAdmin" class="card panel panel--wide">
+        <header class="panel__head">
+          <div>
+            <h3>分类管理</h3>
+            <p class="panel__sub">给物料分组，支持多级；删除时物料会变为未分类。</p>
+          </div>
+        </header>
+        <TaxonomyManager kind="categories" />
+      </article>
+
+      <article v-if="isAdmin" class="card panel panel--wide">
+        <header class="panel__head">
+          <div>
+            <h3>位置管理</h3>
+            <p class="panel__sub">按柜 / 层 / 盒组织存放位置，路径会显示在库存列表。</p>
+          </div>
+        </header>
+        <TaxonomyManager kind="locations" />
+      </article>
     </section>
 
     <el-dialog
@@ -153,6 +173,7 @@ import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Key, UserFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
+import TaxonomyManager from '@/components/TaxonomyManager.vue';
 import { api } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 

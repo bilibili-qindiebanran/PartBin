@@ -6,6 +6,7 @@ import Login from '@/views/Login.vue';
 import AppShell from '@/layouts/AppShell.vue';
 import Dashboard from '@/views/Dashboard.vue';
 import Items from '@/views/Items.vue';
+import ItemDetail from '@/views/ItemDetail.vue';
 import Movements from '@/views/Movements.vue';
 import Loans from '@/views/Loans.vue';
 import Settings from '@/views/Settings.vue';
@@ -23,6 +24,12 @@ const routes = [
     children: [
       { path: '', name: 'dashboard', component: Dashboard, meta: { title: '仪表盘' } },
       { path: 'items', name: 'items', component: Items, meta: { title: '库存' } },
+      {
+        path: 'items/:id',
+        name: 'item-detail',
+        component: ItemDetail,
+        meta: { title: '物料详情' },
+      },
       { path: 'movements', name: 'movements', component: Movements, meta: { title: '流水' } },
       { path: 'loans', name: 'loans', component: Loans, meta: { title: '借出' } },
       { path: 'settings', name: 'settings', component: Settings, meta: { title: '设置' } },
