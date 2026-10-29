@@ -6,6 +6,7 @@
         <el-button type="primary" @click="openMovement('in')">入库</el-button>
         <el-button @click="openMovement('out')">出库</el-button>
         <el-button @click="openMovement('adjust')">盘点</el-button>
+        <el-button v-if="item.available > 0" @click="borrowVisible = true">借出</el-button>
         <el-button :icon="Edit" @click="dialogVisible = true">编辑</el-button>
         <el-button v-if="item.isArchived" @click="restoreItem">恢复</el-button>
         <el-button v-else type="danger" plain @click="archiveItem">归档</el-button>
@@ -125,6 +126,53 @@
         </div>
       </section>
 
+      <article v-if="item.trackingMode === 'instance'" class="card panel instances">
+        <header class="timeline__head">
+          <h3>实例（{{ instances.length }}）</h3>
+          <el-button v-if="auth.canWrite" text @click="openBatch">批量登记</el-button>
+        </header>
+
+        <p v-if="instances.length === 0" class="note">
+          还没有实例。批量登记后会写入一条入库流水。
+        </p>
+        <div v-else class="instances__table">
+          <el-table :data="instances" size="small" empty-text="还没有实例">
+            <el-table-column prop="assetNo" label="编号" min-width="120" />
+            <el-table-column label="状态" width="96">
+              <template #default="{ row }">
+                <el-tag size="small" round :type="statusMeta(row.status).type">
+                  {{ statusMeta(row.status).label }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="locationPath" label="位置" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
+            <el-table-column v-if="auth.canWrite" label="操作" width="90" align="right">
+              <template #default="{ row }">
+                <el-dropdown
+                  v-if="!['lost', 'retired', 'lent'].includes(row.status)"
+                  @command="(command) => changeStatus(row, command)"
+                >
+                  <el-button text size="small">状态</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="broken" :disabled="row.status === 'broken'">
+                        标记维修
+                      </el-dropdown-item>
+                      <el-dropdown-item command="in_stock" :disabled="row.status === 'in_stock'">
+                        恢复在库
+                      </el-dropdown-item>
+                      <el-dropdown-item command="lost" divided>丢失</el-dropdown-item>
+                      <el-dropdown-item command="retired">退役</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </article>
+
       <article class="card panel timeline">
         <header class="timeline__head">
           <h3>出入库流水</h3>
@@ -195,17 +243,47 @@
       :default-type="movementType"
       @saved="handleMovementSaved"
     />
+
+    <BorrowDialog
+      v-if="item"
+      v-model="borrowVisible"
+      :item="item"
+      :instances="instances"
+      @saved="handleBorrowSaved"
+    />
+
+    <el-dialog v-model="batch.visible" title="批量登记实例" width="min(420px, 92vw)" align-center>
+      <div class="batch-form">
+        <label class="field">
+          <span>数量</span>
+          <el-input-number v-model="batch.count" :min="1" :max="100" controls-position="right" class="control" />
+        </label>
+        <label class="field">
+          <span>编号前缀</span>
+          <el-input v-model="batch.prefix" maxlength="40" placeholder="如 RPI" />
+        </label>
+        <label class="field">
+          <span>起始序号</span>
+          <el-input-number v-model="batch.startAt" :min="1" :max="9999" controls-position="right" class="control" />
+        </label>
+      </div>
+      <template #footer>
+        <el-button @click="batch.visible = false">取消</el-button>
+        <el-button type="primary" :loading="batch.saving" @click="submitBatch">登记</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { ArrowLeft, Box, Edit } from '@element-plus/icons-vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
+import BorrowDialog from '@/components/BorrowDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
 import { api } from '@/api/client';
@@ -227,6 +305,22 @@ const movements = ref([]);
 const movementTotal = ref(0);
 const movementPage = ref(1);
 const loadingMovements = ref(false);
+
+const instances = ref([]);
+const borrowVisible = ref(false);
+const batch = reactive({ visible: false, saving: false, count: 1, prefix: '', startAt: 1 });
+
+const STATUS_META = {
+  in_stock: { label: '在库', type: 'success' },
+  lent: { label: '借出', type: 'primary' },
+  broken: { label: '维修', type: 'warning' },
+  lost: { label: '丢失', type: 'danger' },
+  retired: { label: '退役', type: 'info' },
+};
+
+function statusMeta(status) {
+  return STATUS_META[status] ?? { label: status, type: 'info' };
+}
 
 const MOVEMENT_META = {
   in: { label: '入库', type: 'success' },
@@ -253,6 +347,11 @@ async function load() {
   try {
     const data = await api(`/api/items/${route.params.id}`);
     item.value = data.item;
+    if (data.item.trackingMode === 'instance') {
+      await loadInstances();
+    } else {
+      instances.value = [];
+    }
   } catch (requestError) {
     item.value = null;
     error.value = requestError.message || '加载失败';
@@ -323,6 +422,69 @@ async function loadMovements({ append = false } = {}) {
   } finally {
     loadingMovements.value = false;
   }
+}
+
+async function loadInstances() {
+  if (!route.params.id) return;
+  try {
+    const data = await api(`/api/items/${route.params.id}/instances`);
+    instances.value = data.data;
+  } catch (requestError) {
+    ElMessage.error(requestError.message || '加载实例失败');
+  }
+}
+
+function openBatch() {
+  batch.prefix = item.value?.code || 'ITEM';
+  batch.count = 1;
+  batch.startAt = instances.value.length + 1;
+  batch.visible = true;
+}
+
+async function submitBatch() {
+  if (!batch.prefix.trim()) {
+    ElMessage.warning('请输入编号前缀');
+    return;
+  }
+  batch.saving = true;
+  try {
+    const data = await api(`/api/items/${item.value.id}/instances/batch`, {
+      method: 'POST',
+      body: { count: batch.count, prefix: batch.prefix.trim(), startAt: batch.startAt },
+    });
+    ElMessage.success(`已登记 ${data.instances.length} 个实例`);
+    batch.visible = false;
+    await load();
+  } catch (requestError) {
+    ElMessage.error(requestError.message || '登记失败');
+  } finally {
+    batch.saving = false;
+  }
+}
+
+async function changeStatus(instance, status) {
+  try {
+    if (status === 'lost' || status === 'retired') {
+      await ElMessageBox.confirm(
+        status === 'lost'
+          ? '标记丢失后拥有量会减少 1，且不可恢复。'
+          : '退役后拥有量会减少 1，且不可恢复。',
+        status === 'lost' ? '标记丢失' : '退役实例',
+        { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+      );
+    }
+    await api(`/api/instances/${instance.id}`, { method: 'PATCH', body: { status } });
+    ElMessage.success('状态已更新');
+    await load();
+  } catch (requestError) {
+    if (requestError === 'cancel' || requestError === 'close') return;
+    ElMessage.error(requestError.message || '更新状态失败');
+  }
+}
+
+async function handleBorrowSaved() {
+  borrowVisible.value = false;
+  await load();
 }
 
 watch(
@@ -502,6 +664,32 @@ onMounted(async () => {
 
 .timeline {
   margin-top: var(--space-4);
+}
+
+.instances {
+  margin-top: var(--space-4);
+}
+
+.instances__table {
+  overflow-x: auto;
+}
+
+.batch-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.batch-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-600);
+  font-size: 12px;
+}
+
+.batch-form .control {
+  width: 100%;
 }
 
 .timeline__head {
