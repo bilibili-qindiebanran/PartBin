@@ -15,6 +15,9 @@ import { purgeExpiredSessions } from './services/sessions.js';
 import metaRoutes from './routes/meta.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/users.routes.js';
+import categoryRoutes from './routes/categories.routes.js';
+import locationRoutes from './routes/locations.routes.js';
+import itemRoutes from './routes/items.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -119,6 +122,9 @@ export async function buildApp(overrides = {}) {
   await app.register(metaRoutes);
   await app.register(authRoutes);
   await app.register(userRoutes);
+  await app.register(categoryRoutes);
+  await app.register(locationRoutes);
+  await app.register(itemRoutes);
 
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
