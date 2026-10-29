@@ -213,6 +213,13 @@ describe('注册与登录', () => {
     admin.app = ctx.app;
     const code = await makeInvite(admin);
 
+    await request(ctx.app, {
+      method: 'POST',
+      url: '/api/auth/reauth',
+      cookie: admin.cookie,
+      payload: { password: TEST_PASSWORD },
+    });
+
     const closed = await request(ctx.app, {
       method: 'PATCH',
       url: '/api/settings',
@@ -229,6 +236,12 @@ describe('注册与登录', () => {
   it('开放注册模式下无需邀请码，但只创建普通用户', async () => {
     const admin = await createAdminAccount(ctx);
     admin.app = ctx.app;
+    await request(ctx.app, {
+      method: 'POST',
+      url: '/api/auth/reauth',
+      cookie: admin.cookie,
+      payload: { password: TEST_PASSWORD },
+    });
     await request(ctx.app, {
       method: 'PATCH',
       url: '/api/settings',

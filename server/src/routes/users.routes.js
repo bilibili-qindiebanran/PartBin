@@ -2,6 +2,7 @@ import { ERROR } from '../lib/errors.js';
 import { requireBoolean, requireId, requirePassword } from '../lib/validate.js';
 import { listUsers, resetPassword, toPublicUser, updateUser, findById } from '../services/users.js';
 import { deleteSessionsForUser, clearSessionCookie } from '../services/sessions.js';
+import { recordAudit } from '../services/audit-log.js';
 
 /**
  * 用户管理路由（仅管理员）。
@@ -14,7 +15,7 @@ export default async function userRoutes(app) {
     data: listUsers(db),
   }));
 
-  app.patch('/api/users/:id', { preHandler: app.requireAdmin }, async (request) => {
+  app.patch('/api/users/:id', { preHandler: [app.requireAdmin, app.requireReauth] }, async (request) => {
     const id = requireId(request.params.id, '用户 ID');
     const body = request.body ?? {};
 
@@ -32,10 +33,19 @@ export default async function userRoutes(app) {
       throw ERROR.validation('没有需要更新的字段');
     }
 
-    return { user: updateUser(db, patch) };
+    const user = updateUser(db, patch);
+    recordAudit(db, {
+      actorId: request.user.id,
+      action: 'user.update',
+      targetType: 'user',
+      targetId: id,
+      detail: { role: user.role, isActive: user.isActive },
+      ipHash: request.ipHash,
+    });
+    return { user };
   });
 
-  app.post('/api/users/:id/reset-password', { preHandler: app.requireAdmin }, async (request, reply) => {
+  app.post('/api/users/:id/reset-password', { preHandler: [app.requireAdmin, app.requireReauth] }, async (request, reply) => {
     const id = requireId(request.params.id, '用户 ID');
     const newPassword = requirePassword(request.body?.newPassword, {
       username: findById(db, id)?.username,
@@ -45,7 +55,14 @@ export default async function userRoutes(app) {
     deleteSessionsForUser(db, id);
 
     const isSelf = id === request.user.id;
-    if (isSelf) clearSessionCookie(reply);
+    if (isSelf) clearSessionCookie(reply, app.config);
+    recordAudit(db, {
+      actorId: request.user.id,
+      action: 'user.password.reset',
+      targetType: 'user',
+      targetId: id,
+      ipHash: request.ipHash,
+    });
 
     return { ok: true, mustRelogin: isSelf, user: toPublicUser(findById(db, id)) };
   });

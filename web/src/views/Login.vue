@@ -43,11 +43,12 @@
         </div>
 
         <header class="auth-card__header">
-          <h2>{{ mode === 'login' ? '欢迎回来' : '创建账号' }}</h2>
-          <p>{{ mode === 'login' ? '用账号和密码进入你的库存。' : '只需用户名和密码，不需要邮箱。' }}</p>
+          <h2>{{ needsTotp ? '两步验证' : mode === 'login' ? '欢迎回来' : '创建账号' }}</h2>
+          <p v-if="needsTotp">该账号已启用动态验证码，请输入 6 位验证码或恢复码。</p>
+          <p v-else-if="mode === 'login'">用账号和密码进入你的库存。</p>
+          <p v-else-if="auth.registrationMode === 'invite'">注册需要管理员提供的邀请码。</p>
+          <p v-else>只需用户名和密码，不需要邮箱。</p>
         </header>
-
-        <p v-if="showFirstHint" class="hint">你是第一个用户，注册后将自动获得管理员权限。</p>
 
         <form class="auth-form" novalidate @submit.prevent="submit">
           <label class="field">
@@ -67,7 +68,7 @@
               v-model="form.password"
               type="password"
               size="large"
-              placeholder="至少 8 位"
+              placeholder="至少 12 位"
               show-password
               :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
               :prefix-icon="Lock"
@@ -87,6 +88,44 @@
             />
           </label>
 
+          <label v-if="mode === 'register' && auth.registrationMode === 'invite'" class="field">
+            <span>邀请码</span>
+            <el-input
+              v-model="form.inviteCode"
+              size="large"
+              placeholder="PB-XXXX-XXXX-XXXX"
+              autocomplete="off"
+              :prefix-icon="Ticket"
+            />
+          </label>
+
+          <div v-if="needsTotp" class="totp-block">
+            <label v-if="!useRecovery" class="field">
+              <span>动态验证码</span>
+              <el-input
+                v-model="form.totpCode"
+                size="large"
+                maxlength="6"
+                placeholder="6 位数字"
+                autocomplete="one-time-code"
+                :prefix-icon="Key"
+              />
+            </label>
+            <label v-else class="field">
+              <span>恢复码</span>
+              <el-input
+                v-model="form.recoveryCode"
+                size="large"
+                placeholder="XXXX-XXXX"
+                autocomplete="one-time-code"
+                :prefix-icon="Key"
+              />
+            </label>
+            <el-button text size="small" @click="useRecovery = !useRecovery">
+              {{ useRecovery ? '改用动态验证码' : '使用恢复码' }}
+            </el-button>
+          </div>
+
           <p v-if="error" class="error" role="alert">{{ error }}</p>
 
           <el-button
@@ -96,7 +135,7 @@
             native-type="submit"
             :loading="auth.loading"
           >
-            {{ mode === 'login' ? '登录' : '注册并进入' }}
+            {{ needsTotp ? '验证并登录' : mode === 'login' ? '登录' : '注册并进入' }}
           </el-button>
         </form>
 
@@ -112,7 +151,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Cpu, Lock, User } from '@element-plus/icons-vue';
+import { Cpu, Key, Lock, Ticket, User } from '@element-plus/icons-vue';
 import { useAuthStore } from '@/stores/auth';
 import { BRAND } from '@/brand';
 
@@ -121,10 +160,19 @@ const route = useRoute();
 const router = useRouter();
 
 const mode = ref('login');
-const form = reactive({ username: '', password: '', confirm: '' });
+const form = reactive({
+  username: '',
+  password: '',
+  confirm: '',
+  inviteCode: '',
+  totpCode: '',
+  recoveryCode: '',
+});
 const error = ref('');
+const needsTotp = ref(false);
+const useRecovery = ref(false);
 
-const showFirstHint = computed(() => !auth.hasUsers && auth.allowRegistration);
+const registerNeedsInvite = computed(() => auth.registrationMode === 'invite');
 
 onMounted(async () => {
   try {
@@ -132,11 +180,19 @@ onMounted(async () => {
   } catch {
     // 配置拉取失败时保持默认值，真正的错误会在提交时返回
   }
+
+  const invite = route.query.invite ?? route.query.code;
+  if (typeof invite === 'string' && invite) {
+    form.inviteCode = invite;
+    if (auth.allowRegistration) mode.value = 'register';
+  }
 });
 
 function setMode(next) {
   mode.value = next;
   error.value = '';
+  needsTotp.value = false;
+  useRecovery.value = false;
 }
 
 function safeRedirect() {
@@ -157,26 +213,56 @@ async function submit() {
   }
 
   if (mode.value === 'register') {
-    if (form.password.length < 8) {
-      error.value = '密码至少 8 个字符';
+    if (form.password.length < 12) {
+      error.value = '密码至少 12 个字符';
       return;
     }
     if (form.password !== form.confirm) {
       error.value = '两次输入的密码不一致';
       return;
     }
+    if (registerNeedsInvite.value && !form.inviteCode.trim()) {
+      error.value = '请输入邀请码';
+      return;
+    }
+  }
+
+  if (needsTotp.value) {
+    if (useRecovery.value && !form.recoveryCode.trim()) {
+      error.value = '请输入恢复码';
+      return;
+    }
+    if (!useRecovery.value && !/^\d{6}$/.test(form.totpCode.trim())) {
+      error.value = '请输入 6 位动态验证码';
+      return;
+    }
   }
 
   try {
     if (mode.value === 'login') {
-      await auth.login(username, form.password);
+      const factors = needsTotp.value
+        ? useRecovery.value
+          ? { recoveryCode: form.recoveryCode.trim() }
+          : { totpCode: form.totpCode.trim() }
+        : {};
+      await auth.login(username, form.password, factors);
       ElMessage.success('登录成功');
     } else {
-      await auth.register(username, form.password);
+      await auth.register(username, form.password, form.inviteCode.trim() || undefined);
       ElMessage.success('注册成功，欢迎使用');
     }
     router.replace(safeRedirect());
   } catch (requestError) {
+    if (requestError.code === 'TOTP_REQUIRED') {
+      needsTotp.value = true;
+      error.value = '请输入动态验证码';
+      return;
+    }
+    if (requestError.code === 'INVALID_TOTP') {
+      needsTotp.value = true;
+      error.value = '动态验证码或恢复码不正确';
+      return;
+    }
     error.value = requestError.message || '操作失败，请稍后再试';
   }
 }
@@ -340,6 +426,16 @@ async function submit() {
   background: var(--primary-soft);
   color: var(--primary);
   font-size: 12px;
+}
+
+.totp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
 }
 
 .auth-form {

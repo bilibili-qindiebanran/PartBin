@@ -201,7 +201,10 @@ export default async function authRoutes(app) {
     });
 
     startSession(db, reply, request, config, Number(row.id));
-    return { user: toPublicUser(findById(db, row.id)) };
+    return {
+      user: toPublicUser(findById(db, row.id)),
+      totpEnabled: Number(row.totp_enabled) === 1,
+    };
   });
 
   app.get('/api/auth/me', { preHandler: app.authenticate }, async (request) => {
@@ -348,7 +351,7 @@ export default async function authRoutes(app) {
     return { ok: true };
   });
 
-  app.patch('/api/settings', { preHandler: app.requireAdmin }, async (request) => {
+  app.patch('/api/settings', { preHandler: [app.requireAdmin, app.requireReauth] }, async (request) => {
     const body = request.body ?? {};
 
     if (body.registrationMode !== undefined) {

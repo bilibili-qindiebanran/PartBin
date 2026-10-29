@@ -14,6 +14,7 @@ import { createRateLimiter } from './lib/rate-limit.js';
 import { installAuth } from './plugins/auth.js';
 import { purgeExpiredSessions } from './services/sessions.js';
 import { purgeOldLoginAttempts } from './services/login-attempts.js';
+import { recordAudit } from './services/audit-log.js';
 
 import metaRoutes from './routes/meta.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -79,6 +80,11 @@ export async function buildApp(overrides = {}) {
   // 同源校验：带 Origin 的状态变更请求必须与当前 Host 一致（防御 CSRF）
   app.addHook('onRequest', async (request) => {
     if (!MUTATING_METHODS.has(request.method)) return;
+    const fetchSite = request.headers['sec-fetch-site'];
+    if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+      throw new AppError('FORBIDDEN', 403, '请求来源不合法');
+    }
+
     const origin = request.headers.origin;
     if (!origin) return;
 
@@ -90,6 +96,29 @@ export async function buildApp(overrides = {}) {
     }
     if (originHost !== request.host) {
       throw new AppError('FORBIDDEN', 403, '请求来源不合法');
+    }
+  });
+
+  // 写请求审计兜底：记录谁在何时改了哪个接口（不含请求体）
+  app.addHook('onResponse', async (request, reply) => {
+    if (!request.user) return;
+    if (!request.url.startsWith('/api/')) return;
+    if (!MUTATING_METHODS.has(request.method)) return;
+    if (reply.statusCode >= 400) return;
+
+    const path = request.url.split('?')[0];
+    if (path.startsWith('/api/auth/')) return;
+    try {
+      recordAudit(db, {
+        actorId: request.user.id,
+        action: 'api.write',
+        targetType: 'http',
+        targetId: path,
+        detail: { method: request.method, status: reply.statusCode },
+        ipHash: request.ipHash,
+      });
+    } catch {
+      // 审计失败不影响已完成的业务响应
     }
   });
 

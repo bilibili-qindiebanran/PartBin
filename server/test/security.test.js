@@ -6,6 +6,7 @@ import {
   destroyFixture,
   createAdminAccount,
   createUserAccount,
+  loginUser,
   request,
   TEST_PASSWORD,
 } from './helpers.js';
@@ -128,6 +129,115 @@ describe('M6 安全基础设施', () => {
       expect(() =>
         createAdmin(ctx.app.db, { username: 'CyanButterfly', password: TEST_PASSWORD }),
       ).toThrow(/占用/);
+    } finally {
+      await destroyFixture(ctx);
+    }
+  });
+
+
+  it('HTTPS 下使用 __Host- 前缀 Cookie 且带安全属性', async () => {
+    const secure = await createFixture({
+      cookieSecure: true,
+      appSecret: 'test-secret-for-cookie-suite',
+      publicOrigin: 'https://partbin.example.com',
+    });
+    try {
+      createAdmin(secure.app.db, { username: 'admin', password: TEST_PASSWORD });
+      const login = await request(secure.app, {
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: TEST_PASSWORD },
+      });
+      expect(login.statusCode).toBe(200);
+      const cookie = String(login.headers['set-cookie']);
+      expect(cookie).toContain('__Host-partbin_sid=');
+      expect(cookie).toContain('Secure');
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('SameSite=Lax');
+    } finally {
+      await destroyFixture(secure);
+    }
+  });
+
+  it('Sec-Fetch-Site 跨站写请求被拒绝', async () => {
+    const ctx = await createFixture();
+    try {
+      const res = await request(ctx.app, {
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: TEST_PASSWORD },
+        headers: { 'sec-fetch-site': 'cross-site' },
+      });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      await destroyFixture(ctx);
+    }
+  });
+
+  it('库存写操作落审计，用户管理需要 reauth，会话可下线', async () => {
+    const ctx = await createFixture();
+    try {
+      const admin = await createAdminAccount(ctx);
+      const viewer = await createUserAccount(ctx, 'viewer');
+
+      const item = await request(ctx.app, {
+        method: 'POST',
+        url: '/api/items',
+        cookie: admin.cookie,
+        payload: { name: '审计测试', quantity: 1 },
+      });
+      expect(item.statusCode).toBe(201);
+
+      const audit = ctx.app.db
+        .prepare("SELECT action, target_id FROM audit_log WHERE action = 'api.write'")
+        .get();
+      expect(audit).toBeTruthy();
+      expect(audit.target_id).toContain('/api/items');
+
+      const noReauth = await request(ctx.app, {
+        method: 'PATCH',
+        url: `/api/users/${viewer.user.id}`,
+        cookie: admin.cookie,
+        payload: { role: 'admin' },
+      });
+      expect(noReauth.statusCode).toBe(403);
+      expect(noReauth.json().error.code).toBe('REAUTH_REQUIRED');
+
+      await request(ctx.app, {
+        method: 'POST',
+        url: '/api/auth/reauth',
+        cookie: admin.cookie,
+        payload: { password: TEST_PASSWORD },
+      });
+      const promoted = await request(ctx.app, {
+        method: 'PATCH',
+        url: `/api/users/${viewer.user.id}`,
+        cookie: admin.cookie,
+        payload: { role: 'admin' },
+      });
+      expect(promoted.statusCode).toBe(200);
+
+      const sessions = await request(ctx.app, {
+        url: '/api/auth/sessions',
+        cookie: admin.cookie,
+      });
+      expect(sessions.statusCode).toBe(200);
+      const current = sessions.json().data.find((row) => row.current);
+      expect(current).toBeTruthy();
+
+      const other = await loginUser(ctx.app, 'admin');
+      const revoked = await request(ctx.app, {
+        method: 'DELETE',
+        url: `/api/auth/sessions/${current.id}`,
+        cookie: other.cookie,
+      });
+      expect(revoked.statusCode).toBe(200);
+
+      const gone = await request(ctx.app, {
+        url: '/api/auth/me',
+        cookie: admin.cookie,
+      });
+      expect(gone.statusCode).toBe(401);
     } finally {
       await destroyFixture(ctx);
     }

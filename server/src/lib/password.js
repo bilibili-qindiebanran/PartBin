@@ -1,6 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
-const SCRYPT_N = 16384;
+const SCRYPT_N = 32768;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEY_LENGTH = 64;
@@ -16,6 +16,7 @@ export function hashPassword(password) {
     N: SCRYPT_N,
     r: SCRYPT_R,
     p: SCRYPT_P,
+    maxmem: 64 * 1024 * 1024,
   });
   return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
@@ -39,6 +40,7 @@ export function verifyPassword(password, stored) {
       N: Number(n),
       r: Number(r),
       p: Number(p),
+      maxmem: 64 * 1024 * 1024,
     });
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } catch {
