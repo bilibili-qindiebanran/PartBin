@@ -403,14 +403,17 @@ function formatDate(iso) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
+  min-width: 0;
 }
 
 .panel {
+  min-width: 0;
   padding: var(--space-5);
 }
 
 .panel--wide {
   grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .panel__head {
@@ -483,6 +486,8 @@ function formatDate(iso) {
 }
 
 .table-wrap {
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 
@@ -495,11 +500,27 @@ function formatDate(iso) {
 
 @media (max-width: 960px) {
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .panel--wide {
     grid-column: auto;
+  }
+
+  .panel {
+    padding: var(--space-4);
+  }
+
+  .panel__head {
+    gap: var(--space-3);
+  }
+
+  .kv > div {
+    gap: var(--space-3);
+  }
+
+  .kv dd {
+    overflow-wrap: anywhere;
   }
 }
 </style>

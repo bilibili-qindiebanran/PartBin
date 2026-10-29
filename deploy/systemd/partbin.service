@@ -1,0 +1,39 @@
+[Unit]
+Description=PartBin hardware inventory
+Documentation=https://github.com/bilibili-qindiebanran/PartBin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=partbin
+Group=partbin
+WorkingDirectory=/opt/partbin
+EnvironmentFile=/etc/partbin/partbin.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/src/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/var/lib/partbin
+
+[Install]
+WantedBy=multi-user.target

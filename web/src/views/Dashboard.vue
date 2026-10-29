@@ -8,21 +8,22 @@
 
     <section class="hero card">
       <div class="hero__text">
-        <span class="eyebrow">M1–M3 · 库存与流水已接入</span>
+        <span class="eyebrow">PartBin · 硬件库存</span>
         <h2>先查一下，再下单</h2>
         <p>
-          搜索名称、型号或位置，确认手里到底有几个；入库、出库和盘点都会留下可追溯的流水。借出与照片将在后续接入。
+          搜索名称、型号或存放位置，确认手里到底有几个、借给了谁。所有出入库与借还都会留下可追溯的流水。
         </p>
+        <div class="hero__actions">
+          <el-button type="primary" @click="router.push('/items')">查看库存</el-button>
+          <el-button @click="router.push('/movements')">流水台账</el-button>
+        </div>
       </div>
       <el-icon class="hero__icon"><Cpu /></el-icon>
     </section>
 
     <section class="stats">
       <article v-for="stat in stats" :key="stat.label" class="stat card">
-        <div class="stat__top">
-          <span class="stat__label">{{ stat.label }}</span>
-          <span v-if="stat.milestone" class="stat__badge">{{ stat.milestone }}</span>
-        </div>
+        <span class="stat__label">{{ stat.label }}</span>
         <strong class="stat__value num">{{ stat.value }}</strong>
         <span class="stat__hint">{{ stat.hint }}</span>
       </article>
@@ -31,41 +32,71 @@
     <section class="grid">
       <article class="card panel">
         <header class="panel__head">
-          <h3>当前账号</h3>
+          <h3>库存提醒</h3>
+          <router-link class="panel__link" to="/items">全部库存</router-link>
         </header>
-        <dl class="kv">
-          <div>
-            <dt>用户名</dt>
-            <dd>{{ auth.user?.username }}</dd>
-          </div>
-          <div>
-            <dt>角色</dt>
-            <dd>{{ auth.roleLabel }}</dd>
-          </div>
-          <div>
-            <dt>权限</dt>
-            <dd>{{ auth.canWrite ? '可维护库存、成员与设置' : '只读：可查询库存与流水' }}</dd>
-          </div>
-          <div>
-            <dt>最近登录</dt>
-            <dd>{{ lastLogin }}</dd>
-          </div>
-        </dl>
+
+        <p v-if="loadingPanels" class="panel__empty">加载中…</p>
+        <ul v-else-if="lowStock.length > 0" class="item-list">
+          <li
+            v-for="item in lowStock"
+            :key="item.id"
+            role="button"
+            tabindex="0"
+            @click="router.push(`/items/${item.id}`)"
+            @keyup.enter="router.push(`/items/${item.id}`)"
+          >
+            <div class="item-list__main">
+              <strong>{{ item.name }}</strong>
+              <small>
+                {{ item.categoryPath || '未分类' }} ·
+                {{ item.locationPath || '未指定位置' }}
+              </small>
+            </div>
+            <span class="item-list__qty" :class="{ 'is-zero': item.quantity === 0 }">
+              {{ item.quantity }}<small>{{ item.unit }}</small>
+            </span>
+          </li>
+        </ul>
+        <p v-else class="panel__empty">当前没有低库存物料。</p>
       </article>
 
       <article class="card panel">
         <header class="panel__head">
-          <h3>接下来的路线</h3>
+          <h3>最近流水</h3>
+          <router-link class="panel__link" to="/movements">全部流水</router-link>
         </header>
-        <ul class="roadmap">
-          <li v-for="item in roadmap" :key="item.title">
-            <span class="roadmap__badge">{{ item.milestone }}</span>
-            <div class="roadmap__text">
-              <strong>{{ item.title }}</strong>
-              <p>{{ item.description }}</p>
+
+        <p v-if="loadingPanels" class="panel__empty">加载中…</p>
+        <ul v-else-if="recentMovements.length > 0" class="movement-list">
+          <li v-for="movement in recentMovements" :key="movement.id">
+            <el-tag
+              size="small"
+              round
+              effect="plain"
+              :type="movementMeta(movement.type).type"
+            >
+              {{ movementMeta(movement.type).label }}
+            </el-tag>
+            <div class="movement-list__main">
+              <strong>{{ movement.itemName }}</strong>
+              <small>
+                {{ movement.userName || '—' }} ·
+                {{ formatDate(movement.occurredAt, { withTime: true }) }}
+              </small>
             </div>
+            <span
+              class="movement-list__delta num"
+              :class="{
+                'is-plus': movement.quantityDelta > 0,
+                'is-minus': movement.quantityDelta < 0,
+              }"
+            >
+              {{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }}
+            </span>
           </li>
         </ul>
+        <p v-else class="panel__empty">还没有出入库记录。</p>
       </article>
     </section>
   </div>
@@ -73,63 +104,78 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { Cpu } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/api/client';
+import { formatDate } from '@/lib/format';
 
 const auth = useAuthStore();
+const router = useRouter();
 const statsData = ref(null);
+const lowStock = ref([]);
+const recentMovements = ref([]);
+const loadingPanels = ref(true);
 
 const stats = computed(() => [
   {
-    label: '物料种类',
+    label: '在用物料',
     value: statsData.value ? statsData.value.items.active : '—',
-    hint: '在用物料数量',
-    milestone: '',
+    hint: '已归档的不计入',
   },
   {
     label: '低库存',
     value: statsData.value ? statsData.value.items.lowStock : '—',
-    hint: '含缺货物料',
-    milestone: '',
+    hint: statsData.value ? `其中缺货 ${statsData.value.items.outOfStock}` : '含缺货物料',
   },
   {
     label: '本月出库',
     value: statsData.value ? statsData.value.movements.outThisMonth : '—',
     hint: '按数量合计',
-    milestone: '',
   },
   {
     label: '未还借出',
     value: statsData.value ? statsData.value.loans.open : '—',
     hint: statsData.value ? `逾期 ${statsData.value.loans.overdue}` : '逾期会高亮',
-    milestone: '',
   },
 ]);
 
-const roadmap = [
-  { milestone: 'M2', title: '库存主数据', description: '物料、分类与位置树，搜索与低库存筛选。' },
-  { milestone: 'M3', title: '出入库与流水', description: '入库、出库、盘点，全程可追溯。' },
-  { milestone: 'M4', title: '借出与归还', description: '实例管理、部分归还与逾期提醒。' },
-  { milestone: 'M5', title: '照片与导入导出', description: '手机拍照上传，CSV 导入与导出。' },
-];
+const MOVEMENT_META = {
+  in: { label: '入库', type: 'success' },
+  out: { label: '出库', type: 'danger' },
+  adjust: { label: '盘点', type: 'warning' },
+  discard: { label: '报废', type: 'danger' },
+  lost: { label: '丢失', type: 'danger' },
+  borrow: { label: '借出', type: 'primary' },
+  return: { label: '归还', type: 'success' },
+};
 
-const lastLogin = computed(() => {
-  const iso = auth.user?.lastLoginAt;
-  if (!iso) return '—';
-  return new Intl.DateTimeFormat('zh-CN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(iso));
-});
+function movementMeta(type) {
+  return MOVEMENT_META[type] ?? { label: type, type: 'info' };
+}
+
+async function loadPanels() {
+  loadingPanels.value = true;
+  try {
+    const [low, movements] = await Promise.allSettled([
+      api('/api/items?lowStock=1&pageSize=5&sort=quantity'),
+      api('/api/movements?pageSize=6'),
+    ]);
+    if (low.status === 'fulfilled') lowStock.value = low.value.data;
+    if (movements.status === 'fulfilled') recentMovements.value = movements.value.data;
+  } finally {
+    loadingPanels.value = false;
+  }
+}
 
 onMounted(async () => {
-  try {
-    statsData.value = await api('/api/stats');
-  } catch {
-    // 统计失败不阻塞仪表盘
-  }
+  await Promise.allSettled([
+    api('/api/stats').then((data) => {
+      statsData.value = data;
+    }),
+    loadPanels(),
+  ]);
 });
 </script>
 
@@ -168,6 +214,13 @@ onMounted(async () => {
   line-height: 1.7;
 }
 
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 .hero__icon {
   flex-shrink: 0;
   color: var(--primary);
@@ -185,27 +238,13 @@ onMounted(async () => {
 .stat {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   padding: var(--space-4);
-}
-
-.stat__top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 
 .stat__label {
   color: var(--ink-600);
   font-size: 12px;
-}
-
-.stat__badge {
-  padding: 1px 7px;
-  border-radius: var(--r-pill);
-  background: rgba(15, 23, 42, 0.05);
-  color: var(--ink-400);
-  font-size: 10px;
 }
 
 .stat__value {
@@ -229,6 +268,7 @@ onMounted(async () => {
 }
 
 .panel {
+  min-width: 0;
   padding: var(--space-5);
 }
 
@@ -236,6 +276,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: var(--space-4);
 }
 
@@ -244,68 +285,103 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-.kv {
-  display: grid;
-  gap: var(--space-3);
+.panel__link {
+  flex-shrink: 0;
+  color: var(--primary);
+  font-size: 12px;
 }
 
-.kv > div {
+.panel__empty {
+  color: var(--ink-400);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.item-list,
+.movement-list {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px dashed var(--line);
+  flex-direction: column;
 }
 
-.kv > div:last-child {
-  padding-bottom: 0;
+.item-list li,
+.movement-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 6px;
+  border-bottom: 1px dashed var(--line);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.item-list li:last-child,
+.movement-list li:last-child {
   border-bottom: 0;
 }
 
-.kv dt {
-  color: var(--ink-400);
-  font-size: 12px;
+.item-list li:hover {
+  background: rgba(10, 122, 122, 0.04);
 }
 
-.kv dd {
-  color: var(--ink-900);
-  font-size: 13px;
-  text-align: right;
-}
-
-.roadmap {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.roadmap li {
+.item-list__main,
+.movement-list__main {
   display: flex;
-  gap: var(--space-3);
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
 }
 
-.roadmap__badge {
-  flex-shrink: 0;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--r-pill);
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 22px;
-}
-
-.roadmap__text strong {
+.item-list__main strong,
+.movement-list__main strong {
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.roadmap__text p {
-  margin-top: 3px;
-  color: var(--ink-600);
-  font-size: 12px;
-  line-height: 1.6;
+.item-list__main small,
+.movement-list__main small {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--ink-400);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-list__qty {
+  flex-shrink: 0;
+  color: var(--warning);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.item-list__qty small {
+  margin-left: 2px;
+  color: var(--ink-400);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.item-list__qty.is-zero {
+  color: var(--danger);
+}
+
+.movement-list__delta {
+  flex-shrink: 0;
+  color: var(--ink-400);
+  font-size: 13px;
+}
+
+.movement-list__delta.is-plus {
+  color: var(--success);
+}
+
+.movement-list__delta.is-minus {
+  color: var(--danger);
 }
 
 @media (max-width: 960px) {
@@ -314,7 +390,7 @@ onMounted(async () => {
   }
 
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -329,6 +405,10 @@ onMounted(async () => {
 
   .hero__icon {
     display: none;
+  }
+
+  .panel {
+    padding: var(--space-4);
   }
 }
 </style>
