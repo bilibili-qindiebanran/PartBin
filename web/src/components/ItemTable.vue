@@ -63,10 +63,14 @@
       <template #default="{ row }">{{ formatDate(row.updatedAt) }}</template>
     </el-table-column>
 
-    <el-table-column label="操作" width="196" align="right">
+    <el-table-column label="操作" width="286" align="right">
       <template #default="{ row }">
         <el-button text size="small" @click.stop="emit('open', row)">查看</el-button>
         <template v-if="canWrite">
+          <el-button text size="small" type="success" @click.stop="emit('stock-in', row)">
+            入库
+          </el-button>
+          <el-button text size="small" @click.stop="emit('stock-out', row)">出库</el-button>
           <el-button text size="small" type="primary" @click.stop="emit('edit', row)">
             编辑
           </el-button>
@@ -103,7 +107,7 @@ defineProps({
   canWrite: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['open', 'edit', 'archive', 'restore']);
+const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in', 'stock-out']);
 
 function rowClass({ row }) {
   if (row.isArchived) return 'row-archived';

@@ -3,6 +3,9 @@
     <div class="detail-head">
       <el-button text :icon="ArrowLeft" @click="goBack">返回库存</el-button>
       <div v-if="item && auth.canWrite" class="detail-head__actions">
+        <el-button type="primary" @click="openMovement('in')">入库</el-button>
+        <el-button @click="openMovement('out')">出库</el-button>
+        <el-button @click="openMovement('adjust')">盘点</el-button>
         <el-button :icon="Edit" @click="dialogVisible = true">编辑</el-button>
         <el-button v-if="item.isArchived" @click="restoreItem">恢复</el-button>
         <el-button v-else type="danger" plain @click="archiveItem">归档</el-button>
@@ -109,10 +112,8 @@
           </article>
 
           <article class="card panel">
-            <h3>流水与照片</h3>
-            <p class="note">
-              出入库与盘点流水将在 M3 接入；照片上传将在 M5 接入。当前数量以初始入库为准。
-            </p>
+            <h3>照片</h3>
+            <p class="note">照片上传将在 M5 接入；当前数量以流水为准。</p>
           </article>
 
           <article v-if="item.trackingMode === 'instance'" class="card panel">
@@ -123,6 +124,59 @@
           </article>
         </div>
       </section>
+
+      <article class="card panel timeline">
+        <header class="timeline__head">
+          <h3>出入库流水</h3>
+          <el-button text :loading="loadingMovements" @click="loadMovements()">刷新</el-button>
+        </header>
+
+        <p v-if="!loadingMovements && movements.length === 0" class="note">
+          还没有流水。入库、出库或盘点后会在这里留下记录。
+        </p>
+
+        <ul v-else class="timeline__list">
+          <li v-for="movement in movements" :key="movement.id" class="timeline__item">
+            <span class="timeline__dot" :class="`is-${movement.type}`" />
+            <div class="timeline__body">
+              <div class="timeline__row">
+                <el-tag
+                  size="small"
+                  round
+                  effect="plain"
+                  :type="movementMeta(movement.type).type"
+                >
+                  {{ movementMeta(movement.type).label }}
+                </el-tag>
+                <strong
+                  class="num"
+                  :class="
+                    movement.quantityDelta > 0
+                      ? 'delta-plus'
+                      : movement.quantityDelta < 0
+                        ? 'delta-minus'
+                        : 'muted'
+                  "
+                >
+                  {{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }}
+                </strong>
+                <span class="timeline__balance">余额 {{ movement.balanceAfter }}</span>
+              </div>
+              <p class="timeline__meta">
+                {{ formatDate(movement.occurredAt, { withTime: true }) }} ·
+                {{ movement.userName || '—' }}
+                <span v-if="movement.note"> · {{ movement.note }}</span>
+              </p>
+            </div>
+          </li>
+        </ul>
+
+        <div v-if="movementTotal > movements.length" class="timeline__more">
+          <el-button text :loading="loadingMovements" @click="loadMovements({ append: true })">
+            加载更多
+          </el-button>
+        </div>
+      </article>
     </template>
 
     <ItemDialog
@@ -132,6 +186,14 @@
       :categories="dictionary.categoryOptions"
       :locations="dictionary.locationOptions"
       @saved="handleSaved"
+    />
+
+    <MovementDialog
+      v-if="item"
+      v-model="movementVisible"
+      :item="item"
+      :default-type="movementType"
+      @saved="handleMovementSaved"
     />
   </div>
 </template>
@@ -143,6 +205,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { ArrowLeft, Box, Edit } from '@element-plus/icons-vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
+import MovementDialog from '@/components/MovementDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
 import { api } from '@/api/client';
@@ -157,6 +220,27 @@ const item = ref(null);
 const loading = ref(true);
 const error = ref('');
 const dialogVisible = ref(false);
+
+const movementVisible = ref(false);
+const movementType = ref('in');
+const movements = ref([]);
+const movementTotal = ref(0);
+const movementPage = ref(1);
+const loadingMovements = ref(false);
+
+const MOVEMENT_META = {
+  in: { label: '入库', type: 'success' },
+  out: { label: '出库', type: 'danger' },
+  adjust: { label: '盘点', type: 'warning' },
+  discard: { label: '报废', type: 'danger' },
+  lost: { label: '丢失', type: 'danger' },
+  borrow: { label: '借出', type: 'primary' },
+  return: { label: '归还', type: 'success' },
+};
+
+function movementMeta(type) {
+  return MOVEMENT_META[type] ?? { label: type, type: 'info' };
+}
 
 const subtitle = computed(() => {
   const parts = [item.value?.model, item.value?.code, item.value?.manufacturer].filter(Boolean);
@@ -212,13 +296,45 @@ function handleSaved() {
   load();
 }
 
+function openMovement(type) {
+  movementType.value = type;
+  movementVisible.value = true;
+}
+
+function handleMovementSaved() {
+  movementVisible.value = false;
+  load();
+  loadMovements();
+}
+
+async function loadMovements({ append = false } = {}) {
+  if (!route.params.id) return;
+  loadingMovements.value = true;
+  try {
+    const nextPage = append ? movementPage.value + 1 : 1;
+    const data = await api(
+      `/api/items/${route.params.id}/movements?page=${nextPage}&pageSize=20`,
+    );
+    movements.value = append ? [...movements.value, ...data.data] : data.data;
+    movementTotal.value = data.total;
+    movementPage.value = nextPage;
+  } catch (requestError) {
+    ElMessage.error(requestError.message || '加载流水失败');
+  } finally {
+    loadingMovements.value = false;
+  }
+}
+
 watch(
   () => route.params.id,
-  () => load(),
+  () => {
+    load();
+    loadMovements();
+  },
 );
 
 onMounted(async () => {
-  await Promise.allSettled([dictionary.load(), load()]);
+  await Promise.allSettled([dictionary.load(), load(), loadMovements()]);
 });
 </script>
 
@@ -382,6 +498,91 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+.timeline {
+  margin-top: var(--space-4);
+}
+
+.timeline__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.timeline__head h3 {
+  margin-bottom: 0;
+}
+
+.timeline__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.timeline__item {
+  display: flex;
+  gap: 10px;
+}
+
+.timeline__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--ink-400);
+}
+
+.timeline__dot.is-in,
+.timeline__dot.is-return {
+  background: var(--success);
+}
+
+.timeline__dot.is-out,
+.timeline__dot.is-discard,
+.timeline__dot.is-lost {
+  background: var(--danger);
+}
+
+.timeline__dot.is-adjust {
+  background: var(--warning);
+}
+
+.timeline__dot.is-borrow {
+  background: #3b82f6;
+}
+
+.timeline__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline__balance {
+  color: var(--ink-400);
+  font-size: 11px;
+}
+
+.timeline__meta {
+  margin-top: 3px;
+  color: var(--ink-400);
+  font-size: 11px;
+}
+
+.timeline__more {
+  margin-top: var(--space-3);
+  text-align: center;
+}
+
+.delta-plus {
+  color: var(--success);
+}
+
+.delta-minus {
+  color: var(--danger);
 }
 
 @media (max-width: 960px) {

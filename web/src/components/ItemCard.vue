@@ -31,7 +31,9 @@
       </span>
 
       <span v-if="canWrite" class="actions">
-        <el-button text size="small" @click.stop="emit('edit', item)">编辑</el-button>
+        <el-button text size="small" type="primary" @click.stop="emit('stock-in', item)">
+          入库
+        </el-button>
         <el-button
           v-if="item.isArchived"
           text
@@ -56,7 +58,7 @@ defineProps({
   canWrite: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['open', 'edit', 'archive', 'restore']);
+const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
 </script>
 
 <style scoped>
