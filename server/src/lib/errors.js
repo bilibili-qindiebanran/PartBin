@@ -28,6 +28,8 @@ export const ERROR = {
   duplicate: (message = '数据重复') => new AppError('DUPLICATE', 409, message),
   conflict: (message = '操作与当前状态冲突') => new AppError('CONFLICT', 409, message),
   treeCycle: () => new AppError('TREE_CYCLE', 409, '不能把节点移动到自己的子节点下'),
+  insufficientStock: (message = '库存不足', details = null) =>
+    new AppError('INSUFFICIENT_STOCK', 409, message, details),
   lastAdmin: () => new AppError('LAST_ADMIN', 409, '至少保留一个启用状态的管理员'),
   cannotDisableSelf: () => new AppError('CANNOT_DISABLE_SELF', 409, '不能禁用自己'),
   rateLimited: (message = '操作太频繁，请稍后再试', retryAfter = 60) =>

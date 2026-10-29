@@ -60,6 +60,7 @@
         @edit="openEdit"
         @archive="archiveItem"
         @restore="restoreItem"
+        @stock-in="(item) => openMovement(item, 'in')"
       />
     </div>
 
@@ -73,6 +74,8 @@
         @edit="openEdit"
         @archive="archiveItem"
         @restore="restoreItem"
+        @stock-in="(item) => openMovement(item, 'in')"
+        @stock-out="(item) => openMovement(item, 'out')"
       />
     </div>
 
@@ -110,6 +113,14 @@
       :locations="dictionary.locationOptions"
       @saved="handleSaved"
     />
+
+    <MovementDialog
+      v-if="movementItem"
+      v-model="movementVisible"
+      :item="movementItem"
+      :default-type="movementType"
+      @saved="handleMovementSaved"
+    />
   </div>
 </template>
 
@@ -123,6 +134,7 @@ import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
 import ItemCard from '@/components/ItemCard.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
+import MovementDialog from '@/components/MovementDialog.vue';
 import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
@@ -140,6 +152,10 @@ const pageSize = ref(20);
 const loading = ref(false);
 const dialogVisible = ref(false);
 const editingItem = ref(null);
+
+const movementVisible = ref(false);
+const movementItem = ref(null);
+const movementType = ref('in');
 
 const filters = reactive({
   q: '',
@@ -236,6 +252,17 @@ function openEdit(item) {
 
 function openDetail(item) {
   router.push({ name: 'item-detail', params: { id: item.id } });
+}
+
+function openMovement(item, type = 'in') {
+  movementItem.value = item;
+  movementType.value = type;
+  movementVisible.value = true;
+}
+
+function handleMovementSaved() {
+  movementVisible.value = false;
+  load();
 }
 
 function handleSaved() {

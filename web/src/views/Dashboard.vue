@@ -8,10 +8,10 @@
 
     <section class="hero card">
       <div class="hero__text">
-        <span class="eyebrow">PartBin · M1 账号与界面已就绪</span>
-        <h2>先把人管起来，再管物料</h2>
+        <span class="eyebrow">M1–M3 · 库存与流水已接入</span>
+        <h2>先查一下，再下单</h2>
         <p>
-          账号体系、角色权限与双端界面骨架已经完成。下一步接入库存主数据，就能开始「先查一下，再下单」。
+          搜索名称、型号或位置，确认手里到底有几个；入库、出库和盘点都会留下可追溯的流水。借出与照片将在后续接入。
         </p>
       </div>
       <el-icon class="hero__icon"><Cpu /></el-icon>
@@ -21,7 +21,7 @@
       <article v-for="stat in stats" :key="stat.label" class="stat card">
         <div class="stat__top">
           <span class="stat__label">{{ stat.label }}</span>
-          <span class="stat__badge">{{ stat.milestone }}</span>
+          <span v-if="stat.milestone" class="stat__badge">{{ stat.milestone }}</span>
         </div>
         <strong class="stat__value num">{{ stat.value }}</strong>
         <span class="stat__hint">{{ stat.hint }}</span>
@@ -72,19 +72,41 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { Cpu } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import { useAuthStore } from '@/stores/auth';
+import { api } from '@/api/client';
 
 const auth = useAuthStore();
+const statsData = ref(null);
 
-const stats = [
-  { label: '物料种类', value: '—', hint: '接入库存后统计', milestone: 'M2' },
-  { label: '低库存', value: '—', hint: '按阈值自动标记', milestone: 'M2' },
-  { label: '本月出库', value: '—', hint: '流水汇总', milestone: 'M3' },
-  { label: '未还借出', value: '—', hint: '逾期会高亮', milestone: 'M4' },
-];
+const stats = computed(() => [
+  {
+    label: '物料种类',
+    value: statsData.value ? statsData.value.items.active : '—',
+    hint: '在用物料数量',
+    milestone: '',
+  },
+  {
+    label: '低库存',
+    value: statsData.value ? statsData.value.items.lowStock : '—',
+    hint: '含缺货物料',
+    milestone: '',
+  },
+  {
+    label: '本月出库',
+    value: statsData.value ? statsData.value.movements.outThisMonth : '—',
+    hint: '按数量合计',
+    milestone: '',
+  },
+  {
+    label: '未还借出',
+    value: statsData.value ? statsData.value.loans.open : '—',
+    hint: statsData.value ? `逾期 ${statsData.value.loans.overdue}` : '逾期会高亮',
+    milestone: '',
+  },
+]);
 
 const roadmap = [
   { milestone: 'M2', title: '库存主数据', description: '物料、分类与位置树，搜索与低库存筛选。' },
@@ -100,6 +122,14 @@ const lastLogin = computed(() => {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(iso));
+});
+
+onMounted(async () => {
+  try {
+    statsData.value = await api('/api/stats');
+  } catch {
+    // 统计失败不阻塞仪表盘
+  }
 });
 </script>
 
