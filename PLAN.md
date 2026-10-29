@@ -2219,7 +2219,7 @@ M1 已完成（内网可用）。后续顺序：**M2 → M3 → M4 → M5** 打�
 - **禁止提交**：`data/`、`*.db`、`uploads/`、`backups/`、`.env`（仅允许 `.env.example`）、日志、含个人信息的截图/导出、真实密钥。
 - **Commit message**：中文、简洁、`type: 概述`（`feat` / `fix` / `docs` / `chore` / `refactor` / `test`），一次提交只做一件事。
 - **不改写已推送历史**：不 force push、不 rebase；推送后核对 `git status` 与远端 HEAD。
-- **提交身份**：使用仓库本地配置，不把个人邮箱写入提交；不使用 `--author` 注入真实邮箱。
+- **提交身份**：沿用本机 git 全局配置，不做额外隐藏（用户已确认）；不使用 `--author` 伪造他人身份。
 - 详细约束与执行步骤见 `AGENTS.md`，实现见 `scripts/privacy-scan.js` 与 `.githooks/pre-push`。
 
 ---
