@@ -49,6 +49,10 @@ export async function buildApp(overrides = {}) {
 
   try {
     migrate(db);
+    const quick = db.prepare('PRAGMA quick_check').get();
+    if (!quick || quick.quick_check !== 'ok') {
+      throw new Error('数据库完整性检查失败，请从备份恢复后再启动');
+    }
     purgeExpiredSessions(db);
     purgeOldLoginAttempts(db);
   } catch (error) {
@@ -181,7 +185,17 @@ export async function buildApp(overrides = {}) {
   const indexHtml = path.join(config.webDist, 'index.html');
   const hasWebBuild = fs.existsSync(indexHtml);
   if (hasWebBuild) {
-    await app.register(fastifyStatic, { root: config.webDist, prefix: '/' });
+    await app.register(fastifyStatic, {
+      root: config.webDist,
+      prefix: '/',
+      setHeaders(reply, filePath) {
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          reply.header('Cache-Control', 'no-cache');
+        }
+      },
+    });
   }
 
   app.setNotFoundHandler((request, reply) => {

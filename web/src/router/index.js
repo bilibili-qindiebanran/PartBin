@@ -2,14 +2,15 @@ import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { BRAND } from '@/brand';
 
-import Login from '@/views/Login.vue';
 import AppShell from '@/layouts/AppShell.vue';
-import Dashboard from '@/views/Dashboard.vue';
-import Items from '@/views/Items.vue';
-import ItemDetail from '@/views/ItemDetail.vue';
-import Movements from '@/views/Movements.vue';
-import Loans from '@/views/Loans.vue';
-import Settings from '@/views/Settings.vue';
+
+const Login = () => import('@/views/Login.vue');
+const Dashboard = () => import('@/views/Dashboard.vue');
+const Items = () => import('@/views/Items.vue');
+const ItemDetail = () => import('@/views/ItemDetail.vue');
+const Movements = () => import('@/views/Movements.vue');
+const Loans = () => import('@/views/Loans.vue');
+const Settings = () => import('@/views/Settings.vue');
 
 const routes = [
   {

@@ -29,7 +29,7 @@ if (config.host === '127.0.0.1') {
 
 const userCount = Number(app.db.prepare('SELECT COUNT(*) AS c FROM user').get().c);
 if (userCount === 0) {
-  app.log.info('还没有任何账号：打开页面注册的第一个账号将成为管理员');
+  app.log.info('还没有任何账号：请运行 pnpm admin:create 初始化管理员');
 }
 
 let shuttingDown = false;
