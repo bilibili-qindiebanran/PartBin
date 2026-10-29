@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createFixture, destroyFixture, registerUser, request } from './helpers.js';
+import { createFixture, destroyFixture, createAdminAccount, createUserAccount, request } from './helpers.js';
 
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -20,8 +20,8 @@ describe('照片', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
   });
 
   afterEach(async () => {

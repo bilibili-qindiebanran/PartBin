@@ -4,8 +4,10 @@ import { createAdmin } from '../src/services/users.js';
 import {
   createFixture,
   destroyFixture,
-  registerUser,
+  createAdminAccount,
+  createUserAccount,
   request,
+  TEST_PASSWORD,
 } from './helpers.js';
 
 describe('M6 安全基础设施', () => {
@@ -33,7 +35,7 @@ describe('M6 安全基础设施', () => {
   it('会话绝对过期时间不会被滑动续期绕过', async () => {
     const ctx = await createFixture();
     try {
-      const admin = await registerUser(ctx.app, 'admin');
+      const admin = await createAdminAccount(ctx);
       const me = await request(ctx.app, { url: '/api/auth/me', cookie: admin.cookie });
       expect(me.statusCode).toBe(200);
 
@@ -51,8 +53,8 @@ describe('M6 安全基础设施', () => {
   it('创建邀请码需要重新验证密码，并写审计', async () => {
     const ctx = await createFixture();
     try {
-      const admin = await registerUser(ctx.app, 'admin');
-      const viewer = await registerUser(ctx.app, 'viewer');
+      const admin = await createAdminAccount(ctx);
+      const viewer = await createUserAccount(ctx, 'viewer');
 
       const withoutReauth = await request(ctx.app, {
         method: 'POST',
@@ -67,7 +69,7 @@ describe('M6 安全基础设施', () => {
         method: 'POST',
         url: '/api/auth/reauth',
         cookie: admin.cookie,
-        payload: { password: 'password123' },
+        payload: { password: TEST_PASSWORD },
       });
       expect(reauth.statusCode).toBe(200);
 
@@ -94,7 +96,7 @@ describe('M6 安全基础设施', () => {
         method: 'POST',
         url: '/api/auth/reauth',
         cookie: viewer.cookie,
-        payload: { password: 'password123' },
+        payload: { password: TEST_PASSWORD },
       });
       const forbidden = await request(ctx.app, {
         method: 'POST',
@@ -120,11 +122,11 @@ describe('M6 安全基础设施', () => {
     try {
       const user = createAdmin(ctx.app.db, {
         username: 'CyanButterfly',
-        password: 'password123',
+        password: TEST_PASSWORD,
       });
       expect(user.role).toBe('admin');
       expect(() =>
-        createAdmin(ctx.app.db, { username: 'CyanButterfly', password: 'password123' }),
+        createAdmin(ctx.app.db, { username: 'CyanButterfly', password: TEST_PASSWORD }),
       ).toThrow(/占用/);
     } finally {
       await destroyFixture(ctx);

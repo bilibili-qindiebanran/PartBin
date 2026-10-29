@@ -32,17 +32,29 @@ export function requireUsername(value) {
   return username;
 }
 
+const WEAK_PASSWORDS = new Set([
+  'password', 'password123', 'password1234', 'password12345', '123456789012',
+  'qwertyuiopas', 'qwerty123456', 'admin123456', 'administrator', 'letmein12345',
+  'welcome12345', 'iloveyou1234', 'abc123456789', '111111111111', '000000000000',
+  'partbin12345', 'changeme1234', 'p@ssw0rd1234', '1qaz2wsx3edc', 'zxcvbnm12345',
+]);
+
 /**
- * 校验密码规则（8–64 字符、非纯空格、不与用户名相同），返回原密码。
+ * 校验密码规则（12–64 字符、非纯空格、不与用户名相同、不在弱密码库中）。
  */
 export function requirePassword(value, { username } = {}) {
   if (typeof value !== 'string') throw ERROR.validation('密码填写有误');
   const length = Array.from(value).length;
-  if (length < 8 || length > 64) throw ERROR.validation('密码长度需为 8–64 个字符');
+  if (length < 12 || length > 64) throw ERROR.validation('密码长度需为 12–64 个字符');
   if (value.trim().length === 0) throw ERROR.validation('密码不能全为空格');
   if (username && value.toLowerCase() === String(username).toLowerCase()) {
     throw ERROR.validation('密码不能与用户名相同');
   }
+  const normalized = value.toLowerCase();
+  if (WEAK_PASSWORDS.has(normalized) || WEAK_PASSWORDS.has(normalized.replace(/[^a-z0-9]/g, ''))) {
+    throw ERROR.validation('密码过于常见，请换一个');
+  }
+  if (/^(.)\1+$/.test(value)) throw ERROR.validation('密码不能是重复字符');
   return value;
 }
 

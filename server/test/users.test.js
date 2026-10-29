@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createFixture,
   destroyFixture,
+  createAdminAccount,
+  createUserAccount,
   loginUser,
-  registerUser,
   request,
 } from './helpers.js';
 
@@ -14,8 +15,8 @@ describe('用户管理与权限', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
   });
 
   afterEach(async () => {

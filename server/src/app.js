@@ -13,6 +13,7 @@ import { securityHeaders } from './lib/headers.js';
 import { createRateLimiter } from './lib/rate-limit.js';
 import { installAuth } from './plugins/auth.js';
 import { purgeExpiredSessions } from './services/sessions.js';
+import { purgeOldLoginAttempts } from './services/login-attempts.js';
 
 import metaRoutes from './routes/meta.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -48,6 +49,7 @@ export async function buildApp(overrides = {}) {
   try {
     migrate(db);
     purgeExpiredSessions(db);
+    purgeOldLoginAttempts(db);
   } catch (error) {
     db.close();
     throw error;
@@ -62,9 +64,7 @@ export async function buildApp(overrides = {}) {
   app.decorate('db', db);
   app.decorate('config', config);
   app.decorate('limiters', {
-    // 登录：同 IP 10 次/分钟，同账号 5 次/分钟；注册：同 IP 5 次/小时
-    loginIp: createRateLimiter({ limit: 10, windowMs: 60 * 1000 }),
-    loginUser: createRateLimiter({ limit: 5, windowMs: 60 * 1000 }),
+    // 注册：同 IP 5 次/小时；登录使用数据库中的持久化失败计数
     registerIp: createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 }),
   });
 

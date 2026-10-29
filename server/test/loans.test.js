@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createFixture, destroyFixture, registerUser, request } from './helpers.js';
+import { createFixture, destroyFixture, createAdminAccount, createUserAccount, request } from './helpers.js';
 
 describe('借出与归还', () => {
   let ctx;
@@ -8,8 +8,8 @@ describe('借出与归还', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
   });
 
   afterEach(async () => {

@@ -3,6 +3,7 @@ import { ERROR } from '../lib/errors.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { normalizeUsername, requirePassword, requireUsername } from '../lib/validate.js';
 import { nowIso } from '../lib/time.js';
+import { consumeInvite } from './invites.js';
 
 /** 数据库行 → 对外用户对象（不含密码哈希） */
 export function toPublicUser(row) {
@@ -17,40 +18,56 @@ export function toPublicUser(row) {
 }
 
 /**
- * 注册用户。事务内判断是否首人（首个用户自动成为管理员）。
- * @param {import('node:sqlite').DatabaseSync} db
- * @param {{ username: unknown, password: unknown }} input
+ * 创建普通用户（开放注册 / 管理员建号），不修改注册开关。
  */
-export function registerUser(db, { username, password }) {
+export function createUser(db, { username, password, role = 'user' }) {
+  const cleanName = requireUsername(username);
+  requirePassword(password, { username: cleanName });
+  if (role !== 'user' && role !== 'admin') throw ERROR.validation('角色不合法');
+  const passwordHash = hashPassword(password);
+  const usernameNorm = normalizeUsername(cleanName);
+  const now = nowIso();
+
+  if (db.prepare('SELECT id FROM user WHERE username_norm = ?').get(usernameNorm)) {
+    throw ERROR.usernameTaken();
+  }
+
+  const inserted = db
+    .prepare(
+      `INSERT INTO user (username, username_norm, password_hash, role, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .run(cleanName, usernameNorm, passwordHash, role, now, now);
+
+  return toPublicUser(db.prepare('SELECT * FROM user WHERE id = ?').get(inserted.lastInsertRowid));
+}
+
+/**
+ * 凭邀请码注册；消费邀请与建号在同一事务内。
+ */
+export function registerWithInvite(db, { username, password, inviteCode }) {
   const cleanName = requireUsername(username);
   requirePassword(password, { username: cleanName });
   const passwordHash = hashPassword(password);
   const usernameNorm = normalizeUsername(cleanName);
 
   return withTransaction(db, () => {
-    const existing = db.prepare('SELECT id FROM user WHERE username_norm = ?').get(usernameNorm);
-    if (existing) throw ERROR.usernameTaken();
-
-    const count = Number(db.prepare('SELECT COUNT(*) AS c FROM user').get().c);
-    if (count > 0) {
-      const setting = db.prepare("SELECT value FROM setting WHERE key = 'allow_registration'").get();
-      if (setting?.value === '0') throw ERROR.registrationClosed();
+    if (db.prepare('SELECT id FROM user WHERE username_norm = ?').get(usernameNorm)) {
+      throw ERROR.usernameTaken();
     }
-
+    const invite = consumeInvite(db, inviteCode);
     const now = nowIso();
-    let inserted;
-    try {
-      inserted = db.prepare(`
-        INSERT INTO user (username, username_norm, password_hash, role, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?)
-      `).run(cleanName, usernameNorm, passwordHash, count === 0 ? 'admin' : 'user', now, now);
-    } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw ERROR.usernameTaken();
-      throw error;
-    }
+    const inserted = db
+      .prepare(
+        `INSERT INTO user (username, username_norm, password_hash, role, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, ?, ?)`,
+      )
+      .run(cleanName, usernameNorm, passwordHash, invite.role, now, now);
 
-    const row = db.prepare('SELECT * FROM user WHERE id = ?').get(inserted.lastInsertRowid);
-    return { user: toPublicUser(row), firstUser: count === 0 };
+    return {
+      user: toPublicUser(db.prepare('SELECT * FROM user WHERE id = ?').get(inserted.lastInsertRowid)),
+      inviteRole: invite.role,
+    };
   });
 }
 

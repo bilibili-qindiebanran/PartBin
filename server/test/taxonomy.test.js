@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createFixture,
   destroyFixture,
-  registerUser,
+  createAdminAccount,
+  createUserAccount,
   request,
 } from './helpers.js';
 
@@ -12,7 +13,7 @@ describe('分类与位置树', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
+    admin = await createAdminAccount(ctx);
   });
 
   afterEach(async () => {
@@ -135,7 +136,7 @@ describe('分类与位置树', () => {
   });
 
   it('只读账号不能修改分类或位置', async () => {
-    const viewer = await registerUser(ctx.app, 'viewer');
+    const viewer = await createUserAccount(ctx, 'viewer');
 
     const category = await request(ctx.app, {
       method: 'POST',

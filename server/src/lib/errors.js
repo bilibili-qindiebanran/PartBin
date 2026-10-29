@@ -23,6 +23,8 @@ export const ERROR = {
   invalidCredentials: () => new AppError('INVALID_CREDENTIALS', 401, '账号或密码错误'),
   forbidden: (message = '没有权限执行该操作') => new AppError('FORBIDDEN', 403, message),
   reauthRequired: () => new AppError('REAUTH_REQUIRED', 403, '此操作需要重新验证密码'),
+  totpRequired: () => new AppError('TOTP_REQUIRED', 401, '请输入动态验证码'),
+  invalidTotp: () => new AppError('INVALID_TOTP', 401, '动态验证码不正确'),
   registrationClosed: () => new AppError('REGISTRATION_CLOSED', 403, '注册已关闭，请联系管理员'),
   notFound: (message = '资源不存在') => new AppError('NOT_FOUND', 404, message),
   usernameTaken: () => new AppError('USERNAME_TAKEN', 409, '用户名已被占用'),
