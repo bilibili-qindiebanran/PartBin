@@ -1,8 +1,8 @@
 # PartBin · 硬件出入库系统 —— 设计方案与实施计划
 
-> 版本：v1.4　·　日期：2026-10-30　·　状态：M1 已实现；v1.3 公网安全升级待评审
+> 版本：v1.5　·　日期：2026-10-30　·　状态：M1 已实现；v1.3 公网安全升级待评审
 >
-> 变更：v1.1 增补「界面设计」；v1.2 更名为 PartBin；v1.3 定位由局域网升级为**可公网部署**；v1.4 增加 Git 提交与隐私检查规则（15.3 / `AGENTS.md`）。
+> 变更：v1.1 增补「界面设计」；v1.2 更名为 PartBin；v1.3 定位由局域网升级为**可公网部署**；v1.4 增加 Git 提交与隐私检查规则；v1.5 引入 `cyan-dev` 分支工作流。
 >
 > ⚠️ **在 M6（公网安全加固）与 M8（公网部署交付）完成前，当前代码只能在内网使用，不得直接暴露公网。**
 >
@@ -2212,15 +2212,26 @@ sudo -u partbin bash -c 'set -a; . /etc/partbin/env; set +a; \
 
 M1 已完成（内网可用）。后续顺序：**M2 → M3 → M4 → M5** 打通完整业务，然后 **M6 安全加固**、**M7 生产化**、**M8 公网部署**。M6 与 M8 完成前，代码与数据只能在内网使用，禁止直接暴露公网。每个里程碑结束后附：改动清单、测试结果、启动方式、下一步，并按 15.3 提交推送。
 
-### 15.3 Git 提交与发布规则
+### 15.3 Git 分支、提交与发布规则
 
-- **关键节点自动上传**：里程碑完成、设计文档评审通过、安全修复完成、部署前，提交并推送到 `origin/main`（`git@github.com:bilibili-qindiebanran/PartBin.git`）。
-- **上传前必须通过隐私检查**：`pnpm privacy:check`（等价于 `.githooks/pre-push`）；失败时禁止提交/推送。检查覆盖数据目录、`.env`、数据库、依赖与构建产物、私钥、个人邮箱、个人绝对路径与常见令牌格式。
+- **分支模型**：`main` 为稳定分支，只接收经过验证的里程碑合并；`cyan-dev` 为日常开发分支，所有小改动先提交并推送到这里。
+- **日常提交**：提交前 `pnpm privacy:check`；commit message 中文、简洁、`type: 概述`；推送 `origin/cyan-dev`。
+- **合并到 main（关键大节点）**：在 `cyan-dev` 完成验证后执行
+
+  ```bash
+  git switch main
+  git pull --ff-only origin main
+  git merge --no-ff cyan-dev -m "merge: 合并 Mx <名称>"
+  git push origin main
+  git switch cyan-dev
+  ```
+
+  建议在 main 上打里程碑 tag（如 `m2`）并推送。
+- **合并前验证**：`pnpm test`、UI 改动 `pnpm build`、`pnpm privacy:check`、对应手工验收；M6/M8 必须完成 12.10 上线清单。
+- **禁止**：force push、rebase 已推送分支、直接在 `main` 改代码（例外需用户明确同意）。
 - **禁止提交**：`data/`、`*.db`、`uploads/`、`backups/`、`.env`（仅允许 `.env.example`）、日志、含个人信息的截图/导出、真实密钥。
-- **Commit message**：中文、简洁、`type: 概述`（`feat` / `fix` / `docs` / `chore` / `refactor` / `test`），一次提交只做一件事。
-- **不改写已推送历史**：不 force push、不 rebase；推送后核对 `git status` 与远端 HEAD。
-- **提交身份**：沿用本机 git 全局配置，不做额外隐藏（用户已确认）；不使用 `--author` 伪造他人身份。
-- 详细约束与执行步骤见 `AGENTS.md`，实现见 `scripts/privacy-scan.js` 与 `.githooks/pre-push`。
+- **提交身份**：沿用本机 git 全局配置（用户已确认）；不使用 `--author` 伪造他人身份。
+- 详细约束见 `AGENTS.md`；隐私检查实现见 `scripts/privacy-scan.js` 与 `.githooks/pre-push`。
 
 ---
 
