@@ -22,16 +22,32 @@ function toBool(value, fallback) {
  *   appTz: string, logLevel: string, backupKeep: number, webDist: string
  * }}
  */
+const DEV_SECRET = 'dev-only-secret-change-me-32-bytes-min';
+
 export function loadConfig(overrides = {}) {
   const dataDir = overrides.dataDir ?? process.env.DATA_DIR ?? path.join(ROOT_DIR, 'data');
+  const nodeEnv = overrides.nodeEnv ?? process.env.NODE_ENV ?? 'development';
+  const providedSecret = overrides.appSecret ?? process.env.APP_SECRET;
+  const publicOrigin = overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN ?? '';
+  if (nodeEnv === 'production' && !providedSecret) {
+    throw new Error('生产环境必须设置 APP_SECRET（至少 32 字节随机值）');
+  }
+  if (nodeEnv === 'production' && !publicOrigin) {
+    throw new Error('生产环境必须设置 PUBLIC_ORIGIN（例如 https://partbin.example.com）');
+  }
+
   return {
-    nodeEnv: overrides.nodeEnv ?? process.env.NODE_ENV ?? 'development',
+    nodeEnv,
     host: overrides.host ?? process.env.HOST ?? '127.0.0.1',
     port: toInt(overrides.port ?? process.env.PORT, 8787),
     dataDir: path.resolve(dataDir),
-    sessionDays: toInt(overrides.sessionDays ?? process.env.SESSION_DAYS, 30),
-    cookieSecure: toBool(overrides.cookieSecure ?? process.env.COOKIE_SECURE, false),
+    sessionDays: toInt(overrides.sessionDays ?? process.env.SESSION_DAYS, 7),
+    sessionAbsoluteDays: toInt(overrides.sessionAbsoluteDays ?? process.env.SESSION_ABSOLUTE_DAYS, 30),
+    cookieSecure: toBool(overrides.cookieSecure ?? process.env.COOKIE_SECURE, nodeEnv === 'production'),
     trustProxy: toBool(overrides.trustProxy ?? process.env.TRUST_PROXY, false),
+    appSecret: providedSecret ?? DEV_SECRET,
+    publicOrigin,
+    hstsMaxAge: toInt(overrides.hstsMaxAge ?? process.env.HSTS_MAX_AGE, 86400),
     appTz: overrides.appTz ?? process.env.APP_TZ ?? 'Asia/Shanghai',
     logLevel: overrides.logLevel ?? process.env.LOG_LEVEL ?? 'info',
     backupKeep: toInt(overrides.backupKeep ?? process.env.BACKUP_KEEP, 14),

@@ -29,18 +29,23 @@ describe('数据库迁移', () => {
           'loan',
           'movement',
           'item_photo',
+          'invite',
+          'login_attempt',
+          'recovery_code',
+          'audit_log',
         ]),
       );
 
       const applied = Number(
         ctx.app.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c,
       );
-      expect(applied).toBe(2);
+      expect(applied).toBe(3);
 
       const settings = ctx.app.db.prepare('SELECT key, value FROM setting').all();
       expect(settings).toEqual(
         expect.arrayContaining([
           { key: 'allow_registration', value: '1' },
+          { key: 'registration_mode', value: 'invite' },
           { key: 'site_name', value: 'PartBin' },
         ]),
       );
@@ -67,7 +72,7 @@ describe('数据库迁移', () => {
       const applied = Number(
         second.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c,
       );
-      expect(applied).toBe(2);
+      expect(applied).toBe(3);
     } finally {
       await second.close();
       await rm(dir, { recursive: true, force: true });
@@ -90,7 +95,7 @@ describe('数据库迁移', () => {
       expect(row.value).toBe('PartBin');
       expect(
         Number(ctx.app.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c),
-      ).toBe(2);
+      ).toBe(3);
     } finally {
       await destroyFixture(ctx);
     }

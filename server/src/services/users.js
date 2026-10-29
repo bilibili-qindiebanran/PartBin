@@ -151,3 +151,26 @@ export function resetPassword(db, { userId, newPassword }) {
   );
   return row;
 }
+
+/**
+ * 直接创建管理员（CLI 初始化 / 测试使用），不依赖注册开关。
+ */
+export function createAdmin(db, { username, password }) {
+  const cleanName = requireUsername(username);
+  requirePassword(password, { username: cleanName });
+  const usernameNorm = normalizeUsername(cleanName);
+  const now = nowIso();
+
+  if (db.prepare('SELECT id FROM user WHERE username_norm = ?').get(usernameNorm)) {
+    throw ERROR.usernameTaken();
+  }
+
+  const inserted = db
+    .prepare(
+      `INSERT INTO user (username, username_norm, password_hash, role, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 'admin', 1, ?, ?)`,
+    )
+    .run(cleanName, usernameNorm, hashPassword(password), now, now);
+
+  return toPublicUser(db.prepare('SELECT * FROM user WHERE id = ?').get(inserted.lastInsertRowid));
+}

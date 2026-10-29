@@ -9,6 +9,7 @@ import { loadConfig } from './env.js';
 import { openDatabase } from './db/connection.js';
 import { migrate } from './db/migrate.js';
 import { AppError } from './lib/errors.js';
+import { securityHeaders } from './lib/headers.js';
 import { createRateLimiter } from './lib/rate-limit.js';
 import { installAuth } from './plugins/auth.js';
 import { purgeExpiredSessions } from './services/sessions.js';
@@ -24,6 +25,7 @@ import instanceRoutes from './routes/instances.routes.js';
 import loanRoutes from './routes/loans.routes.js';
 import photoRoutes from './routes/photos.routes.js';
 import transferRoutes from './routes/transfer.routes.js';
+import inviteRoutes from './routes/invites.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -66,11 +68,11 @@ export async function buildApp(overrides = {}) {
     registerIp: createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 }),
   });
 
-  // 基础安全响应头
+  // 统一安全响应头（CSP、HSTS、COOP/CORP 等）
   app.addHook('onSend', async (request, reply, payload) => {
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Referrer-Policy', 'same-origin');
-    reply.header('X-Frame-Options', 'DENY');
+    for (const [name, value] of Object.entries(securityHeaders(config))) {
+      if (!reply.hasHeader(name)) reply.header(name, value);
+    }
     return payload;
   });
 
@@ -144,6 +146,7 @@ export async function buildApp(overrides = {}) {
   await app.register(loanRoutes);
   await app.register(photoRoutes);
   await app.register(transferRoutes);
+  await app.register(inviteRoutes);
 
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');

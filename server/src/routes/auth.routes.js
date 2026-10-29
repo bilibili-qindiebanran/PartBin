@@ -18,10 +18,14 @@ import {
 import {
   clearSessionCookie,
   createSession,
+  deleteOwnSession,
   deleteSession,
   deleteSessionsForUser,
+  listSessionsForUser,
   setSessionCookie,
+  updateReauth,
 } from '../services/sessions.js';
+import { nowIso } from '../lib/time.js';
 
 /** 限速检查，超限抛 429 */
 function enforce(limiter, key) {
@@ -54,8 +58,10 @@ export default async function authRoutes(app) {
     const token = createSession(db, {
       userId: user.id,
       ip: request.ip,
+      ipHash: request.ipHash,
       userAgent: request.headers['user-agent'],
       days: config.sessionDays,
+      absoluteDays: config.sessionAbsoluteDays,
     });
     setSessionCookie(reply, token, config);
 
@@ -87,8 +93,10 @@ export default async function authRoutes(app) {
     const token = createSession(db, {
       userId: Number(row.id),
       ip: request.ip,
+      ipHash: request.ipHash,
       userAgent: request.headers['user-agent'],
       days: config.sessionDays,
+      absoluteDays: config.sessionAbsoluteDays,
     });
     setSessionCookie(reply, token, config);
 
@@ -125,6 +133,33 @@ export default async function authRoutes(app) {
     // 改密后吊销其他设备会话，保留当前设备
     deleteSessionsForUser(db, request.user.id, { exceptSessionId: request.sessionId });
 
+    return { ok: true };
+  });
+
+  app.post('/api/auth/reauth', { preHandler: app.authenticate }, async (request) => {
+    const password = request.body?.password;
+    if (typeof password !== 'string' || password.length === 0) {
+      throw ERROR.validation('请输入当前密码');
+    }
+    const row = findById(db, request.user.id);
+    if (!row) throw ERROR.authRequired();
+    if (!verifyPassword(password, row.password_hash)) {
+      throw ERROR.invalidCredentials();
+    }
+    updateReauth(db, request.sessionId);
+    return { ok: true, reauthAt: nowIso() };
+  });
+
+  app.get('/api/auth/sessions', { preHandler: app.authenticate }, async (request) => ({
+    data: listSessionsForUser(db, request.user.id).map((session) => ({
+      ...session,
+      current: session.id === request.sessionId,
+    })),
+  }));
+
+  app.delete('/api/auth/sessions/:id', { preHandler: app.authenticate }, async (request) => {
+    const removed = deleteOwnSession(db, String(request.params.id), request.user.id);
+    if (!removed) throw ERROR.notFound('会话不存在');
     return { ok: true };
   });
 
