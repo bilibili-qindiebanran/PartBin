@@ -14,6 +14,13 @@
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/index.js",
     "test": "pnpm --filter @partbin/server run test",
     "privacy:check": "node scripts/privacy-scan.js",
+    "backup": "node --disable-warning=ExperimentalWarning server/scripts/backup.js",
+    "restore": "node --disable-warning=ExperimentalWarning server/scripts/restore.js",
+    "backup:verify": "node --disable-warning=ExperimentalWarning server/scripts/restore-drill.js",
+    "db:check": "node --disable-warning=ExperimentalWarning server/scripts/db-check.js",
+    "db:reconcile": "node --disable-warning=ExperimentalWarning server/scripts/db-reconcile.js",
+    "security:check": "node --disable-warning=ExperimentalWarning server/scripts/security-check.js",
+    "seed:demo": "node --disable-warning=ExperimentalWarning server/scripts/seed-demo.js",
     "admin:create": "node --disable-warning=ExperimentalWarning server/scripts/create-admin.js",
     "release:check": "pnpm test && pnpm privacy:check",
     "prepare": "git config core.hooksPath .githooks || true"
