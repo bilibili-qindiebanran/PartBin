@@ -1,0 +1,17 @@
+[Unit]
+Description=PartBin encrypted database backup
+After=partbin.service
+
+[Service]
+Type=oneshot
+User=partbin
+Group=partbin
+WorkingDirectory=/opt/partbin
+EnvironmentFile=/etc/partbin/partbin.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/scripts/backup.js
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/partbin

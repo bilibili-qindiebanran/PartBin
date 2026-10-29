@@ -1,0 +1,5 @@
+# 宿主机 Caddy：应用只监听 127.0.0.1:8787
+{$PARTBIN_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8787
+}

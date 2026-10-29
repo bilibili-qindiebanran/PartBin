@@ -29,6 +29,12 @@ export function loadConfig(overrides = {}) {
   const nodeEnv = overrides.nodeEnv ?? process.env.NODE_ENV ?? 'development';
   const providedSecret = overrides.appSecret ?? process.env.APP_SECRET;
   const publicOrigin = overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN ?? '';
+  const trustedProxies = String(
+    overrides.trustedProxies ?? process.env.TRUSTED_PROXIES ?? '',
+  )
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
   if (nodeEnv === 'production' && !providedSecret) {
     throw new Error('生产环境必须设置 APP_SECRET（至少 32 字节随机值）');
   }
@@ -45,12 +51,13 @@ export function loadConfig(overrides = {}) {
     sessionAbsoluteDays: toInt(overrides.sessionAbsoluteDays ?? process.env.SESSION_ABSOLUTE_DAYS, 30),
     cookieSecure: toBool(overrides.cookieSecure ?? process.env.COOKIE_SECURE, nodeEnv === 'production'),
     trustProxy: toBool(overrides.trustProxy ?? process.env.TRUST_PROXY, false),
+    trustedProxies,
     appSecret: providedSecret ?? DEV_SECRET,
     publicOrigin,
     hstsMaxAge: toInt(overrides.hstsMaxAge ?? process.env.HSTS_MAX_AGE, 86400),
     appTz: overrides.appTz ?? process.env.APP_TZ ?? 'Asia/Shanghai',
     logLevel: overrides.logLevel ?? process.env.LOG_LEVEL ?? 'info',
     backupKeep: toInt(overrides.backupKeep ?? process.env.BACKUP_KEEP, 14),
-    webDist: overrides.webDist ?? path.join(ROOT_DIR, 'web', 'dist'),
+    webDist: overrides.webDist ?? process.env.WEB_DIST ?? path.join(ROOT_DIR, 'web', 'dist'),
   };
 }

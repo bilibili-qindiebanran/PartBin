@@ -55,6 +55,6 @@ pnpm start
 
 ## 安全
 
-默认邀请制注册，管理员由 CLI 创建；登录失败持久化锁定；支持 TOTP 与恢复码；写操作审计；安全响应头与 `__Host-` Cookie。详见 [SECURITY.md](SECURITY.md) 与 [PLAN.md](PLAN.md) 第 12 章。
+默认邀请制注册，管理员由 CLI 创建；登录失败持久化锁定；支持 TOTP 与恢复码；写操作审计；安全响应头与 `__Host-` Cookie。详见 [SECURITY.md](SECURITY.md)、[docs/SECURITY.md](docs/SECURITY.md) 与 [PLAN.md](PLAN.md) 第 12 章。
 
 > M8 公网部署清单完成前，请勿把 8787 直接暴露到公网。

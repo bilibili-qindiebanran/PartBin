@@ -62,7 +62,7 @@ export async function buildApp(overrides = {}) {
 
   const app = Fastify({
     logger: buildLogger(config),
-    trustProxy: config.trustProxy,
+    trustProxy: config.trustedProxies.length > 0 ? config.trustedProxies : config.trustProxy,
     bodyLimit: 1024 * 1024,
   });
 

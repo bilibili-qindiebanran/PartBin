@@ -1,0 +1,36 @@
+name: partbin
+
+services:
+  partbin:
+    build: .
+    image: partbin:0.1.0
+    container_name: partbin
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /data
+      WEB_DIST: /app/web/dist
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - partbin-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  partbin-data:
