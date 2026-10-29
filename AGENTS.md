@@ -18,25 +18,55 @@ pnpm test         # 服务端测试
 pnpm privacy:check
 ```
 
-## Git 提交与发布规则（必须遵守）
+## Git 分支与发布规则（必须遵守）
 
-1. **关键节点自动上传**：里程碑完成、设计文档评审通过、安全修复完成、部署前，自动提交并推送到
-   `git@github.com:bilibili-qindiebanran/PartBin.git` 的 `main` 分支。
-2. **先检查再上传**：提交前必须运行 `pnpm privacy:check`；失败时停止提交与推送。仓库已配置
-   `.githooks/pre-push`，安装钩子用 `git config core.hooksPath .githooks`。
-3. **禁止上传的内容**：
-   - `data/`、`*.db`、`*.sqlite*`、`uploads/`、`backups/`；
-   - `.env`、`.env.*`（仅允许 `.env.example`）、任何真实密钥/令牌；
-   - `node_modules/`、`.pnpm-store/`、`web/dist/`、日志、`.DS_Store`；
-   - 含个人信息的截图、录屏、导出数据；
-   - 个人主目录绝对路径、个人邮箱、手机号等隐私信息。
-4. **Commit message 用中文、简洁**：`type: 概述`，type 取 `feat` / `fix` / `docs` / `chore` /
-   `refactor` / `test`；一次提交只做一件事，不加无意义前缀。
-5. **不改写历史**：不 force push、不 rebase 已推送的提交，除非用户明确要求。
-6. **提交身份**：沿用本机 git 全局配置（用户已确认作者信息无需隐藏）；不使用 `--author` 伪造他人身份。
-7. **推送后核对**：确认 `git status` 干净、`git log -1` 与远端 HEAD 一致。
-8. **发现疑似隐私内容**：立即停止推送并告知用户，不要自行删除证据或改写历史。
-9. 本项目代码会公开托管，任何新增文件都按「会被所有人看到」来检查。
+### 分支模型
+
+- `main`：稳定分支，**只接收经过验证的里程碑合并**，禁止日常直接提交。
+- `cyan-dev`：日常开发分支，所有小改动先提交并推送到这里。
+- 开始工作先确认 `git branch --show-current` 为 `cyan-dev`；不是则 `git switch cyan-dev`。
+- 远端：`git@github.com:bilibili-qindiebanran/PartBin.git`。
+
+### 日常提交（小改动）
+
+1. 提交前运行 `pnpm privacy:check`（pre-push 钩子还会再检查一次）；失败即停止。
+2. Commit message 用中文、简洁：`type: 概述`，type 取 `feat` / `fix` / `docs` / `chore` /
+   `refactor` / `test`；一次提交只做一件事。
+3. `git push origin cyan-dev`。
+4. 关键节点（里程碑完成、设计评审通过、安全修复、部署前）同样提交并推送，保证远端有记录。
+
+### 合并到 main（关键大节点）
+
+1. 在 `cyan-dev` 上完成验证：
+   - `pnpm test`
+   - UI 改动：`pnpm build`
+   - `pnpm privacy:check`
+   - 对应里程碑的手工验收；M6/M8 必须完成 `PLAN.md` 12.10 上线清单
+2. 合并并推送：
+
+   ```bash
+   git switch main
+   git pull --ff-only origin main
+   git merge --no-ff cyan-dev -m "merge: 合并 Mx <名称>"
+   git push origin main
+   git switch cyan-dev
+   ```
+
+3. 建议在 main 上打里程碑 tag：`git tag -a m2 -m "M2 库存主数据" && git push origin m2`。
+
+### 禁止与约束
+
+- 不 force push、不 rebase 已推送分支、不改写历史。
+- 不直接在 main 改代码；例外需用户明确同意。
+- 禁止上传的内容：
+  - `data/`、`*.db`、`*.sqlite*`、`uploads/`、`backups/`；
+  - `.env`、`.env.*`（仅允许 `.env.example`）、任何真实密钥/令牌；
+  - `node_modules/`、`.pnpm-store/`、`web/dist/`、日志、`.DS_Store`；
+  - 含个人信息的截图、录屏、导出数据；
+  - 个人主目录绝对路径、个人邮箱、手机号等隐私信息。
+- 提交身份沿用本机 git 全局配置（用户已确认作者信息无需隐藏）；不使用 `--author` 伪造他人身份。
+- 推送后核对 `git status` 与远端 HEAD；发现疑似隐私内容立即停止推送并告知用户。
+- 本项目代码公开托管，任何新增文件都按「会被所有人看到」来检查。
 
 ## 安全底线
 
