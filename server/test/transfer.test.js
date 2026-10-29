@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createFixture, destroyFixture, registerUser, request } from './helpers.js';
+import { createFixture, destroyFixture, createAdminAccount, createUserAccount, request } from './helpers.js';
 
 const CSV_HEADER = '名称,编号,分类,位置,数量,低库存阈值,型号,单位\r\n';
 
@@ -10,8 +10,8 @@ describe('CSV 导入导出', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
   });
 
   afterEach(async () => {

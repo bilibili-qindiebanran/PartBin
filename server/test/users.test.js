@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createFixture,
   destroyFixture,
+  createAdminAccount,
+  createUserAccount,
   loginUser,
-  registerUser,
   request,
+  TEST_PASSWORD,
 } from './helpers.js';
 
 describe('用户管理与权限', () => {
@@ -14,8 +16,15 @@ describe('用户管理与权限', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
+    const reauth = await request(ctx.app, {
+      method: 'POST',
+      url: '/api/auth/reauth',
+      cookie: admin.cookie,
+      payload: { password: TEST_PASSWORD },
+    });
+    expect(reauth.statusCode).toBe(200);
   });
 
   afterEach(async () => {

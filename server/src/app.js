@@ -9,9 +9,12 @@ import { loadConfig } from './env.js';
 import { openDatabase } from './db/connection.js';
 import { migrate } from './db/migrate.js';
 import { AppError } from './lib/errors.js';
+import { securityHeaders } from './lib/headers.js';
 import { createRateLimiter } from './lib/rate-limit.js';
 import { installAuth } from './plugins/auth.js';
 import { purgeExpiredSessions } from './services/sessions.js';
+import { purgeOldLoginAttempts } from './services/login-attempts.js';
+import { recordAudit } from './services/audit-log.js';
 
 import metaRoutes from './routes/meta.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -24,6 +27,7 @@ import instanceRoutes from './routes/instances.routes.js';
 import loanRoutes from './routes/loans.routes.js';
 import photoRoutes from './routes/photos.routes.js';
 import transferRoutes from './routes/transfer.routes.js';
+import inviteRoutes from './routes/invites.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -46,6 +50,7 @@ export async function buildApp(overrides = {}) {
   try {
     migrate(db);
     purgeExpiredSessions(db);
+    purgeOldLoginAttempts(db);
   } catch (error) {
     db.close();
     throw error;
@@ -60,23 +65,26 @@ export async function buildApp(overrides = {}) {
   app.decorate('db', db);
   app.decorate('config', config);
   app.decorate('limiters', {
-    // 登录：同 IP 10 次/分钟，同账号 5 次/分钟；注册：同 IP 5 次/小时
-    loginIp: createRateLimiter({ limit: 10, windowMs: 60 * 1000 }),
-    loginUser: createRateLimiter({ limit: 5, windowMs: 60 * 1000 }),
+    // 注册：同 IP 5 次/小时；登录使用数据库中的持久化失败计数
     registerIp: createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 }),
   });
 
-  // 基础安全响应头
+  // 统一安全响应头（CSP、HSTS、COOP/CORP 等）
   app.addHook('onSend', async (request, reply, payload) => {
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Referrer-Policy', 'same-origin');
-    reply.header('X-Frame-Options', 'DENY');
+    for (const [name, value] of Object.entries(securityHeaders(config))) {
+      if (!reply.hasHeader(name)) reply.header(name, value);
+    }
     return payload;
   });
 
   // 同源校验：带 Origin 的状态变更请求必须与当前 Host 一致（防御 CSRF）
   app.addHook('onRequest', async (request) => {
     if (!MUTATING_METHODS.has(request.method)) return;
+    const fetchSite = request.headers['sec-fetch-site'];
+    if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+      throw new AppError('FORBIDDEN', 403, '请求来源不合法');
+    }
+
     const origin = request.headers.origin;
     if (!origin) return;
 
@@ -88,6 +96,29 @@ export async function buildApp(overrides = {}) {
     }
     if (originHost !== request.host) {
       throw new AppError('FORBIDDEN', 403, '请求来源不合法');
+    }
+  });
+
+  // 写请求审计兜底：记录谁在何时改了哪个接口（不含请求体）
+  app.addHook('onResponse', async (request, reply) => {
+    if (!request.user) return;
+    if (!request.url.startsWith('/api/')) return;
+    if (!MUTATING_METHODS.has(request.method)) return;
+    if (reply.statusCode >= 400) return;
+
+    const path = request.url.split('?')[0];
+    if (path.startsWith('/api/auth/')) return;
+    try {
+      recordAudit(db, {
+        actorId: request.user.id,
+        action: 'api.write',
+        targetType: 'http',
+        targetId: path,
+        detail: { method: request.method, status: reply.statusCode },
+        ipHash: request.ipHash,
+      });
+    } catch {
+      // 审计失败不影响已完成的业务响应
     }
   });
 
@@ -144,6 +175,7 @@ export async function buildApp(overrides = {}) {
   await app.register(loanRoutes);
   await app.register(photoRoutes);
   await app.register(transferRoutes);
+  await app.register(inviteRoutes);
 
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');

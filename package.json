@@ -14,6 +14,7 @@
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/index.js",
     "test": "pnpm --filter @partbin/server run test",
     "privacy:check": "node scripts/privacy-scan.js",
+    "admin:create": "node --disable-warning=ExperimentalWarning server/scripts/create-admin.js",
     "release:check": "pnpm test && pnpm privacy:check",
     "prepare": "git config core.hooksPath .githooks || true"
   }

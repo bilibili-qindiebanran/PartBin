@@ -50,7 +50,7 @@
             type="password"
             size="large"
             show-password
-            placeholder="新密码（至少 8 位）"
+            placeholder="新密码（至少 12 位）"
             autocomplete="new-password"
           />
           <el-input
@@ -67,14 +67,35 @@
         </form>
       </article>
 
+      <article class="card panel panel--wide">
+        <header class="panel__head">
+          <div>
+            <h3>账号安全</h3>
+            <p class="panel__sub">动态验证码（TOTP）与登录设备管理。</p>
+          </div>
+        </header>
+        <SecuritySettings />
+      </article>
+
       <article v-if="isAdmin" class="card panel panel--wide">
         <header class="panel__head">
           <div>
-            <h3>开放注册</h3>
-            <p class="panel__sub">关闭后只有现有账号能登录，新用户无法注册。</p>
+            <h3>注册策略</h3>
+            <p class="panel__sub">邀请码适合小团队；开放注册建议只在受信网络临时使用。</p>
           </div>
-          <el-switch v-model="registrationOpen" @change="onRegistrationChange" />
         </header>
+        <el-radio-group v-model="registrationMode" @change="onRegistrationModeChange">
+          <el-radio-button value="closed">关闭</el-radio-button>
+          <el-radio-button value="invite">邀请码</el-radio-button>
+          <el-radio-button value="open">开放</el-radio-button>
+        </el-radio-group>
+        <p class="hint">
+          {{ registrationMode === 'invite' ? '新用户必须持邀请码注册。' : registrationMode === 'closed' ? '所有注册入口关闭，只能由管理员建号。' : '任何人都可以注册为只读用户。' }}
+        </p>
+        <div v-if="registrationMode === 'invite'" class="invite-wrap">
+          <h4>邀请码</h4>
+          <InviteManager />
+        </div>
       </article>
 
       <article v-if="isAdmin" class="card panel panel--wide">
@@ -165,7 +186,7 @@
         type="password"
         size="large"
         show-password
-        placeholder="新密码（至少 8 位）"
+        placeholder="新密码（至少 12 位）"
       />
       <template #footer>
         <el-button @click="resetDialog.visible = false">取消</el-button>
@@ -185,7 +206,10 @@ import { Key, UserFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import TaxonomyManager from '@/components/TaxonomyManager.vue';
 import DataTransferCard from '@/components/DataTransferCard.vue';
+import SecuritySettings from '@/components/SecuritySettings.vue';
+import InviteManager from '@/components/InviteManager.vue';
 import { api } from '@/api/client';
+import { ensureReauth } from '@/lib/reauth';
 import { useAuthStore } from '@/stores/auth';
 
 const auth = useAuthStore();
@@ -195,13 +219,13 @@ const isAdmin = computed(() => auth.canWrite);
 const users = ref([]);
 const loadingUsers = ref(false);
 const savingPassword = ref(false);
-const registrationOpen = ref(auth.allowRegistration);
+const registrationMode = ref(auth.registrationMode || 'invite');
 
 const passwordForm = reactive({ current: '', next: '', confirm: '' });
 const resetDialog = reactive({ visible: false, saving: false, user: null, password: '' });
 
 onMounted(async () => {
-  registrationOpen.value = auth.allowRegistration;
+  registrationMode.value = auth.registrationMode || 'invite';
   if (isAdmin.value) await loadUsers();
 });
 
@@ -231,8 +255,8 @@ async function changePassword() {
     ElMessage.warning('请输入当前密码');
     return;
   }
-  if (passwordForm.next.length < 8) {
-    ElMessage.warning('新密码至少 8 个字符');
+  if (passwordForm.next.length < 12) {
+    ElMessage.warning('新密码至少 12 个字符');
     return;
   }
   if (passwordForm.next !== passwordForm.confirm) {
@@ -258,19 +282,38 @@ async function changePassword() {
   }
 }
 
-async function onRegistrationChange(value) {
+const REGISTRATION_LABELS = { closed: '已关闭注册', invite: '已改为邀请码注册', open: '已开放注册' };
+
+async function onRegistrationModeChange(value) {
+  if (!(await reauthOrCancel())) {
+    registrationMode.value = auth.registrationMode || 'invite';
+    return;
+  }
   try {
-    await api('/api/settings', { method: 'PATCH', body: { allowRegistration: value } });
-    auth.allowRegistration = value;
-    ElMessage.success(value ? '已开放注册' : '已关闭注册');
+    await api('/api/settings', { method: 'PATCH', body: { registrationMode: value } });
+    auth.registrationMode = value;
+    auth.allowRegistration = value !== 'closed';
+    ElMessage.success(REGISTRATION_LABELS[value] || '注册策略已更新');
   } catch (error) {
-    registrationOpen.value = !value;
+    registrationMode.value = auth.registrationMode || 'invite';
     await handleError(error);
+  }
+}
+
+async function reauthOrCancel() {
+  try {
+    await ensureReauth();
+    return true;
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return false;
+    await handleError(error);
+    return false;
   }
 }
 
 async function changeRole(user, role) {
   if (role === user.role) return;
+  if (!(await reauthOrCancel())) return;
   try {
     const data = await api(`/api/users/${user.id}`, { method: 'PATCH', body: { role } });
     Object.assign(user, data.user);
@@ -295,6 +338,11 @@ async function toggleActive(user, value) {
       );
     }
 
+    if (!(await reauthOrCancel())) {
+      user.isActive = !value;
+      return;
+    }
+
     const data = await api(`/api/users/${user.id}`, {
       method: 'PATCH',
       body: { isActive: value },
@@ -314,10 +362,12 @@ function openReset(user) {
 }
 
 async function submitReset() {
-  if (resetDialog.password.length < 8) {
-    ElMessage.warning('新密码至少 8 个字符');
+  if (resetDialog.password.length < 12) {
+    ElMessage.warning('新密码至少 12 个字符');
     return;
   }
+
+  if (!(await reauthOrCancel())) return;
 
   resetDialog.saving = true;
   try {
@@ -451,5 +501,26 @@ function formatDate(iso) {
   .panel--wide {
     grid-column: auto;
   }
+}
+</style>
+
+<style scoped>
+.hint {
+  margin-top: 8px;
+  color: var(--ink-400);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.invite-wrap {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.invite-wrap h4 {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
 }
 </style>

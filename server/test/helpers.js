@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/env.js';
+import { createAdmin, createUser } from '../src/services/users.js';
 
 /**
  * 创建一套隔离的测试环境（临时数据目录 + 真实迁移）。
@@ -48,18 +49,34 @@ export function request(app, { method = 'GET', url, cookie, payload, headers } =
   return app.inject(options);
 }
 
-/** 注册并返回响应、Cookie、响应体 */
-export async function registerUser(app, username, password = 'password123') {
+export const TEST_PASSWORD = 'Cyan-Test-Pass-2026';
+
+/** 直接创建管理员并登录（替代旧的“首用户自动管理员”） */
+export async function createAdminAccount(ctx, username = 'admin') {
+  const user = createAdmin(ctx.app.db, { username, password: TEST_PASSWORD });
+  const login = await loginUser(ctx.app, username, TEST_PASSWORD);
+  return { user, res: login.res, cookie: login.cookie, body: login.body };
+}
+
+/** 直接创建普通用户并登录 */
+export async function createUserAccount(ctx, username, role = 'user') {
+  const user = createUser(ctx.app.db, { username, password: TEST_PASSWORD, role });
+  const login = await loginUser(ctx.app, username, TEST_PASSWORD);
+  return { user, res: login.res, cookie: login.cookie, body: login.body };
+}
+
+/** 注册并返回响应、Cookie、响应体（默认密码符合新策略） */
+export async function registerUser(app, username, password = TEST_PASSWORD, inviteCode = undefined) {
   const res = await request(app, {
     method: 'POST',
     url: '/api/auth/register',
-    payload: { username, password },
+    payload: { username, password, inviteCode },
   });
   return { res, cookie: cookieFrom(res), body: res.json() };
 }
 
 /** 登录并返回响应、Cookie、响应体 */
-export async function loginUser(app, username, password = 'password123') {
+export async function loginUser(app, username, password = TEST_PASSWORD) {
   const res = await request(app, {
     method: 'POST',
     url: '/api/auth/login',

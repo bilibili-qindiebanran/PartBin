@@ -3,6 +3,11 @@ import { isExpired, isoAfterDays, nowIso } from '../lib/time.js';
 
 export const COOKIE_NAME = 'inv_sid';
 
+/** HTTPS 下使用 __Host- 前缀，开发环境保留旧名便于调试 */
+export function sessionCookieName(config = {}) {
+  return config.cookieSecure ? '__Host-partbin_sid' : COOKIE_NAME;
+}
+
 /** 会话 token 只以 SHA-256 形式落库 */
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -10,23 +15,26 @@ function hashToken(token) {
 
 /**
  * 创建会话并返回明文 token（仅此一次出现在服务端）。
- * @param {import('node:sqlite').DatabaseSync} db
- * @param {{ userId: number, ip?: string, userAgent?: string, days: number }} input
+ * 同时写空闲过期与绝对过期；绝对过期不会被滑动续期延长。
  */
-export function createSession(db, { userId, ip, userAgent, days }) {
+export function createSession(db, { userId, ip, ipHash, userAgent, days, absoluteDays = days }) {
   const token = randomBytes(32).toString('base64url');
   const now = new Date();
   db.prepare(`
-    INSERT INTO session (id, user_id, token_hash, created_at, expires_at, last_seen_at, ip, user_agent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO session (
+      id, user_id, token_hash, created_at, expires_at, absolute_expires_at, last_seen_at, ip, ip_hash, user_agent
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     randomUUID(),
     userId,
     hashToken(token),
     now.toISOString(),
     isoAfterDays(days, now.getTime()),
+    isoAfterDays(absoluteDays, now.getTime()),
     now.toISOString(),
     ip ?? null,
+    ipHash ?? null,
     userAgent ?? null,
   );
   return token;
@@ -44,6 +52,8 @@ export function findSession(db, token) {
   const row = db.prepare(`
     SELECT s.id AS session_id,
            s.expires_at,
+           s.absolute_expires_at,
+           s.reauth_at,
            s.last_seen_at,
            u.id AS user_id,
            u.username,
@@ -56,11 +66,14 @@ export function findSession(db, token) {
 
   if (!row) return null;
   if (isExpired(row.expires_at)) return null;
+  if (row.absolute_expires_at && isExpired(row.absolute_expires_at)) return null;
   if (Number(row.is_active) !== 1) return null;
 
   return {
     sessionId: row.session_id,
     expiresAt: row.expires_at,
+    absoluteExpiresAt: row.absolute_expires_at,
+    reauthAt: row.reauth_at,
     lastSeenAt: row.last_seen_at,
     user: {
       id: Number(row.user_id),
@@ -94,6 +107,37 @@ export function deleteSession(db, sessionId) {
   db.prepare('DELETE FROM session WHERE id = ?').run(sessionId);
 }
 
+/** 记录最近一次敏感操作再验证时间 */
+export function updateReauth(db, sessionId) {
+  db.prepare('UPDATE session SET reauth_at = ? WHERE id = ?').run(nowIso(), sessionId);
+}
+
+/** 当前用户的登录设备列表 */
+export function listSessionsForUser(db, userId) {
+  return db
+    .prepare(
+      `SELECT id, created_at, last_seen_at, expires_at, absolute_expires_at, reauth_at, ip_hash, user_agent
+       FROM session WHERE user_id = ? ORDER BY last_seen_at DESC`,
+    )
+    .all(userId)
+    .map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      lastSeenAt: row.last_seen_at,
+      expiresAt: row.expires_at,
+      absoluteExpiresAt: row.absolute_expires_at,
+      reauthAt: row.reauth_at,
+      ipHash: row.ip_hash ? String(row.ip_hash).slice(0, 8) : null,
+      userAgent: row.user_agent ?? null,
+    }));
+}
+
+/** 用户只能删除自己的会话 */
+export function deleteOwnSession(db, sessionId, userId) {
+  const result = db.prepare('DELETE FROM session WHERE id = ? AND user_id = ?').run(sessionId, userId);
+  return Number(result.changes ?? 0) > 0;
+}
+
 /**
  * 删除某个用户的会话；可通过 exceptSessionId 保留当前设备。
  */
@@ -107,13 +151,18 @@ export function deleteSessionsForUser(db, userId, { exceptSessionId } = {}) {
 
 /** 清理过期会话（启动时调用） */
 export function purgeExpiredSessions(db) {
-  const result = db.prepare('DELETE FROM session WHERE expires_at <= ?').run(nowIso());
+  const now = nowIso();
+  const result = db
+    .prepare(
+      'DELETE FROM session WHERE expires_at <= ? OR (absolute_expires_at IS NOT NULL AND absolute_expires_at <= ?)',
+    )
+    .run(now, now);
   return Number(result.changes ?? 0);
 }
 
 /** 下发会话 Cookie */
 export function setSessionCookie(reply, token, config) {
-  reply.setCookie(COOKIE_NAME, token, {
+  reply.setCookie(sessionCookieName(config), token, {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
@@ -122,7 +171,9 @@ export function setSessionCookie(reply, token, config) {
   });
 }
 
-/** 清除会话 Cookie */
-export function clearSessionCookie(reply) {
-  reply.clearCookie(COOKIE_NAME, { path: '/' });
+/** 清除会话 Cookie（兼容旧名与新名） */
+export function clearSessionCookie(reply, config) {
+  const names = new Set([COOKIE_NAME, '__Host-partbin_sid']);
+  if (config) names.add(sessionCookieName(config));
+  for (const name of names) reply.clearCookie(name, { path: '/' });
 }

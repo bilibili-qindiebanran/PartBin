@@ -6,7 +6,7 @@
 
 - **PartBin · 硬件出入库系统**：Node 24 + Fastify 5 + 内置 `node:sqlite` + Vue 3。
 - 计划、数据模型与里程碑见 `PLAN.md`。
-- **M6（公网安全加固）与 M8（公网部署交付）完成前，禁止把服务暴露到公网。**
+- **M8（公网部署交付）完成前，禁止把服务暴露到公网。**
 
 ## 常用命令
 
@@ -16,6 +16,7 @@ pnpm build        # 构建 web/dist
 pnpm start        # 单端口生产模式 8787
 pnpm test         # 服务端测试
 pnpm privacy:check
+pnpm admin:create # 初始化管理员（空库必须）
 ```
 
 ## Git 分支与发布规则（必须遵守）

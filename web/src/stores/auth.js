@@ -5,7 +5,9 @@ export const useAuthStore = defineStore('auth', {
   state: () => ({
     user: null,
     allowRegistration: true,
+    registrationMode: 'invite',
     hasUsers: true,
+    totpEnabled: false,
     siteName: 'PartBin',
     checked: false,
     loading: false,
@@ -21,6 +23,7 @@ export const useAuthStore = defineStore('auth', {
     async fetchConfig() {
       const config = await api('/api/auth/config');
       this.allowRegistration = Boolean(config.allowRegistration);
+      this.registrationMode = config.registrationMode || 'invite';
       this.hasUsers = Boolean(config.hasUsers);
       this.siteName = config.siteName || this.siteName;
       return config;
@@ -40,7 +43,9 @@ export const useAuthStore = defineStore('auth', {
         const me = await api('/api/auth/me');
         this.user = me.user;
         this.allowRegistration = Boolean(me.allowRegistration);
+        this.registrationMode = me.registrationMode || 'invite';
         this.hasUsers = Boolean(me.hasUsers);
+        this.totpEnabled = Boolean(me.totpEnabled);
       } catch (error) {
         if (error.status !== 401) console.error('[auth] 获取当前用户失败', error);
         this.user = null;
@@ -49,14 +54,15 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async login(username, password) {
+    async login(username, password, factors = {}) {
       this.loading = true;
       try {
         const data = await api('/api/auth/login', {
           method: 'POST',
-          body: { username, password },
+          body: { username, password, ...factors },
         });
         this.user = data.user;
+        this.totpEnabled = Boolean(data.totpEnabled);
         this.checked = true;
         return data;
       } finally {
@@ -64,12 +70,12 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async register(username, password) {
+    async register(username, password, inviteCode = undefined) {
       this.loading = true;
       try {
         const data = await api('/api/auth/register', {
           method: 'POST',
-          body: { username, password },
+          body: { username, password, inviteCode },
         });
         this.user = data.user;
         this.hasUsers = true;

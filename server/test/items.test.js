@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createFixture,
   destroyFixture,
-  registerUser,
+  createAdminAccount,
+  createUserAccount,
   request,
 } from './helpers.js';
 
@@ -13,8 +14,8 @@ describe('物料主数据', () => {
 
   beforeEach(async () => {
     ctx = await createFixture();
-    admin = await registerUser(ctx.app, 'admin');
-    viewer = await registerUser(ctx.app, 'viewer');
+    admin = await createAdminAccount(ctx);
+    viewer = await createUserAccount(ctx, 'viewer');
   });
 
   afterEach(async () => {
