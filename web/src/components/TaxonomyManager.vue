@@ -86,6 +86,15 @@
               />
             </label>
           </div>
+          <el-button
+            v-if="dialog.gridEnabled"
+            size="small"
+            plain
+            :loading="swapping"
+            @click="swapGrid"
+          >
+            交换行列（已有格位一起转置）
+          </el-button>
           <p class="hint">
             分类盒的每个格子放一种元件；关闭开关即为大盒，可混装多种元件袋。
           </p>
@@ -117,6 +126,7 @@ const base = computed(() => (props.kind === 'categories' ? '/api/categories' : '
 const nodes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const swapping = ref(false);
 const dialog = reactive({
   visible: false,
   mode: 'create',
@@ -127,8 +137,8 @@ const dialog = reactive({
   code: '',
   note: '',
   gridEnabled: false,
-  gridRows: 8,
-  gridCols: 3,
+  gridRows: 3,
+  gridCols: 8,
 });
 
 const dialogTitle = computed(() => {
@@ -156,8 +166,8 @@ function resetDialog() {
   dialog.code = '';
   dialog.note = '';
   dialog.gridEnabled = false;
-  dialog.gridRows = 8;
-  dialog.gridCols = 3;
+  dialog.gridRows = 3;
+  dialog.gridCols = 8;
 }
 
 function openCreate(parent) {
@@ -177,9 +187,34 @@ function openEdit(node) {
   dialog.code = node.code ?? '';
   dialog.note = node.note ?? '';
   dialog.gridEnabled = Boolean(node.isGrid);
-  dialog.gridRows = node.gridRows ?? 8;
-  dialog.gridCols = node.gridCols ?? 3;
+  dialog.gridRows = node.gridRows ?? 3;
+  dialog.gridCols = node.gridCols ?? 8;
   dialog.visible = true;
+}
+
+async function swapGrid() {
+  if (props.kind !== 'locations') return;
+
+  if (!dialog.id) {
+    const rows = dialog.gridRows;
+    dialog.gridRows = dialog.gridCols;
+    dialog.gridCols = rows;
+    return;
+  }
+
+  swapping.value = true;
+  try {
+    const data = await api(`${base.value}/${dialog.id}/swap-grid`, { method: 'POST' });
+    dialog.gridRows = data.location.gridRows;
+    dialog.gridCols = data.location.gridCols;
+    ElMessage.success('已交换行列，格位坐标一起转置');
+    await load();
+    await dictionary.refresh();
+  } catch (error) {
+    ElMessage.error(error.message || '交换失败');
+  } finally {
+    swapping.value = false;
+  }
 }
 
 async function submit() {
