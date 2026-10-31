@@ -30,6 +30,7 @@ import transferRoutes from './routes/transfer.routes.js';
 import inviteRoutes from './routes/invites.routes.js';
 import binRoutes from './routes/bins.routes.js';
 import lcscRoutes from './routes/lcsc.routes.js';
+import bomRoutes from './routes/bom.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -187,6 +188,7 @@ export async function buildApp(overrides = {}) {
   await app.register(inviteRoutes);
   await app.register(binRoutes);
   await app.register(lcscRoutes);
+  await app.register(bomRoutes);
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
   const hasWebBuild = fs.existsSync(indexHtml);
