@@ -140,7 +140,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Box, Plus, Refresh, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
@@ -158,6 +158,7 @@ import { api } from '@/api/client';
 const auth = useAuthStore();
 const dictionary = useDictionaryStore();
 const router = useRouter();
+const route = useRoute();
 const { isMobile } = useBreakpoint();
 
 const items = ref([]);
@@ -179,7 +180,7 @@ watch(view, (value) => {
 });
 
 const filters = reactive({
-  q: '',
+  q: typeof route.query.q === 'string' ? route.query.q : '',
   categoryId: null,
   locationId: null,
   lowStock: false,
@@ -252,6 +253,17 @@ watch(
   },
 );
 
+watch(
+  () => route.query.q,
+  (value) => {
+    if (typeof value !== 'string') return;
+    if (value === filters.q) return;
+    // 从仪表盘「查看全部」跳过来时，切到表格视图展示完整结果
+    if (value.trim()) view.value = 'table';
+    filters.q = value;
+  },
+);
+
 function resetFilters() {
   filters.q = '';
   filters.categoryId = null;
@@ -274,7 +286,6 @@ function openEdit(item) {
 function openDetail(item) {
   router.push({ name: 'item-detail', params: { id: item.id } });
 }
-
 function openMovement(item, type = 'in') {
   movementItem.value = item;
   movementType.value = type;

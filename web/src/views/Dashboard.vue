@@ -13,12 +13,60 @@
         <p>
           搜索名称、型号或存放位置，确认手里到底有几个、借给了谁。所有出入库与借还都会留下可追溯的流水。
         </p>
+
+        <div class="hero__search">
+          <el-input
+            v-model="query"
+            size="large"
+            class="hero__input"
+            placeholder="搜索名称 / 型号 / 规格 / 编号"
+            clearable
+            :prefix-icon="Search"
+            @keyup.enter="goSearch"
+          />
+          <el-button type="primary" size="large" :icon="Search" @click="goSearch">搜索</el-button>
+        </div>
+
         <div class="hero__actions">
           <el-button type="primary" @click="router.push('/items')">查看库存</el-button>
           <el-button @click="router.push('/movements')">流水台账</el-button>
         </div>
       </div>
       <el-icon class="hero__icon"><Cpu /></el-icon>
+    </section>
+
+    <section v-if="query.trim()" class="card search-panel">
+      <header class="panel__head">
+        <h3>「{{ query.trim() }}」的搜索结果</h3>
+        <router-link class="panel__link" :to="{ path: '/items', query: { q: query.trim() } }">
+          在库存中查看全部
+        </router-link>
+      </header>
+
+      <p v-if="searching" class="panel__empty">搜索中…</p>
+      <ul v-else-if="results.length > 0" class="item-list">
+        <li
+          v-for="item in results"
+          :key="item.id"
+          role="button"
+          tabindex="0"
+          @click="router.push(`/items/${item.id}`)"
+          @keyup.enter="router.push(`/items/${item.id}`)"
+        >
+          <div class="item-list__main">
+            <strong>{{ item.name }}</strong>
+            <small>
+              {{ item.locationPath || '未指定位置' }}
+              <template v-if="item.cellRow"> · {{ cellLabel(item) }}</template>
+              · {{ item.categoryPath || '未分类' }}
+            </small>
+          </div>
+          <span class="item-list__qty" :class="{ 'is-zero': item.quantity === 0 }">
+            {{ item.quantity }}<small>{{ item.unit }}</small>
+          </span>
+        </li>
+      </ul>
+      <p v-else class="panel__empty">没有匹配的元件，换个关键字试试。</p>
     </section>
 
     <section class="stats">
@@ -103,9 +151,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Cpu } from '@element-plus/icons-vue';
+import { Cpu, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/api/client';
@@ -117,6 +165,57 @@ const statsData = ref(null);
 const lowStock = ref([]);
 const recentMovements = ref([]);
 const loadingPanels = ref(true);
+
+const query = ref('');
+const results = ref([]);
+const searching = ref(false);
+let searchTimer = null;
+
+function rowLetter(row) {
+  let value = Number(row);
+  let text = '';
+  while (value > 0) {
+    const rest = (value - 1) % 26;
+    text = String.fromCharCode(65 + rest) + text;
+    value = Math.floor((value - 1) / 26);
+  }
+  return text;
+}
+
+function cellLabel(item) {
+  return item.cellRow ? `${rowLetter(item.cellRow)}${item.cellCol}` : '';
+}
+
+function goSearch() {
+  const term = query.value.trim();
+  if (!term) return;
+  router.push({ path: '/items', query: { q: term } });
+}
+
+watch(query, (value) => {
+  if (searchTimer) clearTimeout(searchTimer);
+  const term = value.trim();
+  if (!term) {
+    results.value = [];
+    searching.value = false;
+    return;
+  }
+  searching.value = true;
+  searchTimer = setTimeout(async () => {
+    try {
+      const params = new URLSearchParams({ q: term, pageSize: '6' });
+      results.value = (await api(`/api/items?${params.toString()}`)).data;
+    } catch {
+      results.value = [];
+    } finally {
+      searching.value = false;
+    }
+  }, 250);
+});
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer);
+});
 
 const stats = computed(() => [
   {
@@ -214,11 +313,23 @@ onMounted(async () => {
   line-height: 1.7;
 }
 
+.hero__search {
+  display: flex;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 16px;
+}
+
+.hero__input {
+  flex: 1;
+  min-width: 0;
+}
+
 .hero__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .hero__icon {
@@ -265,6 +376,11 @@ onMounted(async () => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
   margin-top: var(--space-4);
+}
+
+.search-panel {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-5);
 }
 
 .panel {
