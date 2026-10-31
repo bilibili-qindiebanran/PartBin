@@ -1,27 +1,44 @@
 <template>
   <div v-loading="loading" class="wall">
-    <p v-if="canWrite" class="wall__hint">
+    <section class="card wall__bar">
+      <el-input
+        v-model="keyword"
+        class="wall__search"
+        placeholder="搜索名称 / 型号 / 规格 / 编号，只看含该元件的盒"
+        clearable
+        :prefix-icon="Search"
+      />
+      <span v-if="keyword.trim()" class="wall__count">
+        {{ searching ? '搜索中…' : `命中 ${visibleBoxes.length} 个盒` }}
+      </span>
+    </section>
+
+    <p v-if="canWrite && !keyword.trim()" class="wall__hint">
       拖动盒子可以调整顺序；点击格子进入元件，点击盒名打开盒页面。
     </p>
 
     <EmptyState
-      v-if="!loading && boxes.length === 0"
-      title="还没有元件盒"
-      description="到「设置 → 位置管理」给盒子设置行列数，或先登记一些物料。"
+      v-if="!loading && visibleBoxes.length === 0"
+      :title="keyword.trim() ? '没有匹配的盒子' : '还没有元件盒'"
+      :description="
+        keyword.trim()
+          ? '换个关键字，或到表格视图里按条件筛选。'
+          : '到「设置 → 位置管理」给盒子设置行列数，或先登记一些物料。'
+      "
     >
       <template #icon><Box /></template>
     </EmptyState>
 
     <div v-else class="wall__grid" :class="{ 'is-dragging': dragIndex !== null }">
       <article
-        v-for="(box, index) in boxes"
+        v-for="(box, index) in visibleBoxes"
         :key="box.id"
         class="tile card"
         :class="{
           'is-dragging': dragIndex === index,
           'is-over': overIndex === index && dragIndex !== index,
         }"
-        :draggable="canWrite"
+        :draggable="canWrite && !keyword.trim()"
         @dragstart="onDragStart(index, $event)"
         @dragover.prevent="onDragOver(index)"
         @dragleave="onDragLeave(index)"
@@ -50,8 +67,9 @@
             @cell-click="onCellClick(box, $event)"
           />
           <footer class="tile__foot">
-            <span>{{ box.cells.length }} / {{ box.capacity }} 格已用</span>
-            <span v-if="box.itemCount - box.cells.length > 0" class="tile__warn">
+            <span v-if="keyword.trim()" class="tile__hit">命中 {{ box.matchCount }} 处</span>
+            <span v-else>{{ box.cells.length }} / {{ box.capacity }} 格已用</span>
+            <span v-if="!keyword.trim() && box.itemCount - box.cells.length > 0" class="tile__warn">
               {{ box.itemCount - box.cells.length }} 未归位
             </span>
           </footer>
@@ -68,8 +86,8 @@
           <template #reference>
             <div class="tile__bag" @click="openBox(box)">
               <el-icon class="tile__bag-icon"><Files /></el-icon>
-              <strong>{{ box.kindCount }}</strong>
-              <span>种元件</span>
+              <strong>{{ keyword.trim() ? box.matchCount : box.kindCount }}</strong>
+              <span>{{ keyword.trim() ? '处命中' : '种元件' }}</span>
             </div>
           </template>
           <ul class="bag-list">
@@ -77,7 +95,7 @@
               <strong>{{ item.name }}</strong>
               <span>{{ item.quantity }}{{ item.unit }}</span>
             </li>
-            <li v-if="box.kindCount > box.items.length" class="bag-list__more">
+            <li v-if="!keyword.trim() && box.kindCount > box.items.length" class="bag-list__more">
               还有 {{ box.kindCount - box.items.length }} 种…
             </li>
           </ul>
@@ -88,10 +106,10 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Box, Files } from '@element-plus/icons-vue';
+import { Box, Files, Search } from '@element-plus/icons-vue';
 import EmptyState from '@/components/EmptyState.vue';
 import BinThumb from '@/components/BinThumb.vue';
 import { api } from '@/api/client';
@@ -107,6 +125,79 @@ const boxes = ref([]);
 const loading = ref(false);
 const dragIndex = ref(null);
 const overIndex = ref(null);
+
+const keyword = ref('');
+const matchedIds = ref(new Set());
+const matchedItems = ref([]);
+const searching = ref(false);
+let searchTimer = null;
+
+/** 搜索时只保留含匹配元件的盒子，并给命中格打上 match 标记 */
+const visibleBoxes = computed(() => {
+  const term = keyword.value.trim();
+  if (!term) {
+    return boxes.value.map((box) => ({ ...box, matchCount: 0 }));
+  }
+
+  const ids = matchedIds.value;
+  const byLocation = new Map();
+  for (const item of matchedItems.value) {
+    if (item.locationId == null) continue;
+    const list = byLocation.get(item.locationId) ?? [];
+    list.push(item);
+    byLocation.set(item.locationId, list);
+  }
+
+  return boxes.value
+    .map((box) => {
+      const hits = byLocation.get(box.id) ?? [];
+      if (box.isGrid) {
+        const cells = box.cells.map((cell) => ({
+          ...cell,
+          match: ids.has(cell.item.id),
+        }));
+        return {
+          ...box,
+          cells,
+          matchCount: cells.filter((cell) => cell.match).length,
+        };
+      }
+      return {
+        ...box,
+        items: hits,
+        matchCount: hits.length,
+      };
+    })
+    .filter((box) => box.matchCount > 0);
+});
+
+async function runSearch(term) {
+  if (!term) {
+    matchedIds.value = new Set();
+    matchedItems.value = [];
+    searching.value = false;
+    return;
+  }
+
+  searching.value = true;
+  try {
+    const params = new URLSearchParams({ q: term, pageSize: '100' });
+    const data = await api(`/api/items?${params.toString()}`);
+    matchedItems.value = data.data;
+    matchedIds.value = new Set(data.data.map((item) => item.id));
+  } catch (error) {
+    matchedIds.value = new Set();
+    matchedItems.value = [];
+    ElMessage.error(error.message || '搜索失败');
+  } finally {
+    searching.value = false;
+  }
+}
+
+watch(keyword, (value) => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runSearch(value.trim()), 250);
+});
 
 async function load() {
   loading.value = true;
@@ -133,11 +224,11 @@ function onCellClick(box, cell) {
 }
 
 function onDragStart(index, event) {
-  if (!props.canWrite) return;
+  if (!props.canWrite || keyword.value.trim()) return;
   dragIndex.value = index;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(boxes.value[index]?.id ?? ''));
+    event.dataTransfer.setData('text/plain', String(visibleBoxes.value[index]?.id ?? ''));
   }
 }
 
@@ -151,7 +242,7 @@ function onDragLeave(index) {
 }
 
 async function onDrop(index) {
-  if (!props.canWrite || dragIndex.value === null) return;
+  if (!props.canWrite || dragIndex.value === null || keyword.value.trim()) return;
   const from = dragIndex.value;
   overIndex.value = null;
   dragIndex.value = null;
@@ -180,9 +271,32 @@ function onDragEnd() {
 }
 
 onMounted(load);
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer);
+});
 </script>
 
 <style scoped>
+.wall__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: var(--space-3);
+  padding: 12px;
+}
+
+.wall__search {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.wall__count {
+  flex-shrink: 0;
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
 .wall__hint {
   margin-bottom: var(--space-3);
   color: var(--ink-400);
@@ -263,6 +377,11 @@ onMounted(load);
 
 .tile__warn {
   color: var(--warning);
+}
+
+.tile__hit {
+  color: var(--primary);
+  font-weight: 600;
 }
 
 .tile__bag {

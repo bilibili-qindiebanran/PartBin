@@ -76,6 +76,7 @@ const gridCells = computed(() => {
         row,
         col,
         item,
+        match: Boolean(hit?.match),
         lowStock: Boolean(item?.lowStock) || Number(item?.quantity ?? 0) === 0,
         label: `${rowLetter(row)}${col}`,
         title: item
@@ -95,9 +96,11 @@ function handleClick(cell, event) {
   emit('cell-click', cell);
 }
 
-function cellClass(cell) {  const classes = {
+function cellClass(cell) {
+  const classes = {
     'is-empty': !cell.item,
     'is-low': Boolean(cell.item) && cell.lowStock,
+    'is-match': Boolean(cell.item) && Boolean(cell.match),
   };
   if (
     props.highlight &&
@@ -141,6 +144,16 @@ function cellClass(cell) {  const classes = {
   border-color: var(--primary);
   background: var(--primary);
   box-shadow: 0 0 0 2px rgba(10, 122, 122, 0.28);
+}
+
+.bin-thumb__cell.is-match {
+  border-color: var(--primary);
+  background: rgba(10, 122, 122, 0.42);
+  box-shadow: 0 0 0 2px rgba(10, 122, 122, 0.22);
+}
+
+.bin-thumb__cell.is-match .bin-thumb__letter {
+  color: #fff;
 }
 
 .bin-thumb__letter {
