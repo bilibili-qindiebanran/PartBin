@@ -282,13 +282,24 @@ function exportCsv() {
 <style scoped>
 .uploader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: var(--space-5);
   align-items: stretch;
+  padding: var(--space-4) var(--space-5);
 }
 
 .uploader__drop {
   min-width: 0;
+}
+
+.uploader__drop :deep(.el-upload),
+.uploader__drop :deep(.el-upload-dragger) {
+  width: 100%;
+}
+
+.uploader__drop :deep(.el-upload-dragger) {
+  padding: 32px 20px;
+  border-radius: var(--r-md);
 }
 
 .uploader__icon {
@@ -317,8 +328,8 @@ function exportCsv() {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 12px;
-  padding-left: var(--space-3);
+  gap: 14px;
+  padding: var(--space-2) 0 var(--space-2) var(--space-5);
   border-left: 1px dashed var(--line);
 }
 
@@ -344,15 +355,15 @@ function exportCsv() {
 .summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-4);
+  gap: var(--space-4);
+  margin-top: var(--space-5);
 }
 
 .stat {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: var(--space-3);
+  gap: 6px;
+  padding: var(--space-4) var(--space-5);
 }
 
 .stat__label {
@@ -384,8 +395,8 @@ function exportCsv() {
 }
 
 .panel {
-  margin-top: var(--space-4);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
 .panel__head {
@@ -393,7 +404,7 @@ function exportCsv() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .panel__head h3 {
@@ -452,30 +463,30 @@ function exportCsv() {
 }
 
 .pickup {
-  margin-top: var(--space-4);
+  margin-top: var(--space-5);
 }
 
 .pickup__title {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   font-size: 14px;
   font-weight: 600;
 }
 
 .pickup__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
 }
 
 .pickup__card {
-  padding: var(--space-3);
+  padding: var(--space-4);
 }
 
 .pickup__card header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-bottom: 8px;
+  padding-bottom: 10px;
   border-bottom: 1px dashed var(--line);
   color: var(--ink-900);
   font-size: 13px;
@@ -484,8 +495,8 @@ function exportCsv() {
 .pickup__card ul {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .pickup__card li {
@@ -521,17 +532,19 @@ function exportCsv() {
 @media (max-width: 860px) {
   .uploader {
     grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3);
+    gap: var(--space-3);
   }
 
   .uploader__side {
-    padding-top: var(--space-3);
-    padding-left: 0;
+    padding: var(--space-4) 0 0;
     border-top: 1px dashed var(--line);
     border-left: 0;
   }
 
   .summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
   }
 }
 </style>
