@@ -64,7 +64,8 @@
           <span class="stat__label">已匹配</span>
           <strong class="stat__value">{{ report.summary.matched }}</strong>
           <span class="stat__hint">
-            缺失 {{ report.summary.missing }} · 有歧义 {{ report.summary.ambiguous }}
+            部分匹配 {{ report.summary.partial ?? 0 }} · 缺失 {{ report.summary.missing }} · 有歧义
+            {{ report.summary.ambiguous }}
           </span>
         </article>
         <article class="card stat" :class="{ 'stat--warn': report.summary.shortageGroups > 0 }">
@@ -88,7 +89,7 @@
           <el-checkbox v-model="onlyProblems">只看缺失 / 缺料</el-checkbox>
         </div>
 
-        <el-table :data="visibleGroups" class="bom-table" row-key="key">
+        <el-table :data="visibleGroups" class="bom-table" row-key="key" :row-class-name="rowClass">
           <el-table-column label="元件" min-width="200">
             <template #default="{ row }">
               <div class="cell-main">
@@ -97,9 +98,13 @@
                   <template v-if="row.lcscCode">{{ row.lcscCode }}</template>
                   <template v-if="row.model"> · {{ row.model }}</template>
                   <template v-if="row.package"> · {{ row.package }}</template>
+                  <template v-if="row.voltage"> · {{ row.voltage }}</template>
                 </small>
                 <small v-if="row.designators.length" class="cell-designators">
                   {{ row.designators.join(' ') }}
+                </small>
+                <small v-for="msg in row.mismatches ?? []" :key="msg" class="cell-warn">
+                  {{ msg }}
                 </small>
               </div>
             </template>
@@ -130,9 +135,12 @@
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="100">
             <template #default="{ row }">
               <el-tag v-if="row.status === 'matched'" size="small" type="success">已匹配</el-tag>
+              <el-tag v-else-if="row.status === 'partial'" size="small" type="warning">
+                部分匹配
+              </el-tag>
               <el-tag v-else-if="row.status === 'ambiguous'" size="small" type="warning">有歧义</el-tag>
               <el-tag v-else size="small" type="danger">缺失</el-tag>
             </template>
@@ -185,6 +193,10 @@ const loading = ref(false);
 const report = ref(null);
 const onlyProblems = ref(false);
 
+function rowClass({ row }) {
+  return row.status === 'partial' ? 'row-partial' : '';
+}
+
 const visibleGroups = computed(() => {
   if (!report.value) return [];
   if (!onlyProblems.value) return report.value.groups;
@@ -231,7 +243,7 @@ async function runMatch() {
 
 function exportCsv() {
   if (!report.value) return;
-  const header = ['元件', '立创料号', '型号', '封装', '单板用量', '需求', '库存', '缺口', '最多套数', '位置', '格位', '状态', '位号'];
+  const header = ['元件', '立创料号', '型号', '封装', '耐压', '单板用量', '需求', '库存', '缺口', '最多套数', '位置', '格位', '状态', '参数差异', '位号'];
   const lines = [header.join(',')];
   for (const row of report.value.groups) {
     const cells = [
@@ -239,6 +251,7 @@ function exportCsv() {
       row.lcscCode ?? '',
       row.model ?? '',
       row.package ?? '',
+      row.voltage ?? '',
       row.perSet,
       row.demand,
       row.stock ?? '',
@@ -247,6 +260,7 @@ function exportCsv() {
       row.location ?? '',
       row.cell ? row.cell.replace('格位 ', '') : '',
       row.status,
+      (row.mismatches ?? []).join('；'),
       row.designators.join(' '),
     ].map((value) => {
       const text = String(value ?? '');
@@ -404,6 +418,18 @@ function exportCsv() {
 
 .cell-designators {
   color: var(--ink-500) !important;
+}
+
+.cell-warn {
+  color: var(--warning, #b45309) !important;
+}
+
+:deep(.row-partial) {
+  background: rgba(214, 154, 21, 0.08) !important;
+}
+
+:deep(.row-partial) {
+  background: rgba(214, 154, 21, 0.08) !important;
 }
 
 .cell-chip {
