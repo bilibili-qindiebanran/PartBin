@@ -36,6 +36,8 @@
         <el-button text size="small" type="primary" @click.stop="emit('stock-in', item)">
           入库
         </el-button>
+        <el-button text size="small" @click.stop="emit('stock-out', item)">出库</el-button>
+        <el-button text size="small" @click.stop="emit('edit', item)">编辑</el-button>
         <el-button
           v-if="item.isArchived"
           text
@@ -61,7 +63,7 @@ const props = defineProps({
   canWrite: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
+const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in', 'stock-out']);
 
 function rowLetter(row) {
   let value = Number(row);
@@ -174,9 +176,10 @@ const cellLabel = computed(() =>
 
 .item-card__foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 8px;
   margin-top: 10px;
   min-height: 26px;
 }
@@ -189,6 +192,12 @@ const cellLabel = computed(() =>
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.actions :deep(.el-button + .el-button) {
+  margin-left: 2px;
 }
 </style>

@@ -74,6 +74,7 @@
         @archive="archiveItem"
         @restore="restoreItem"
         @stock-in="(item) => openMovement(item, 'in')"
+        @stock-out="(item) => openMovement(item, 'out')"
       />
     </div>
 
