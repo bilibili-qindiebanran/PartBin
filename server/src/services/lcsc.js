@@ -191,11 +191,10 @@ export function lcscToItemFields(part, current = {}) {
     return value === '' ? (incoming ?? null) : existing;
   };
 
-  const spec = [part.package, part.description].filter(Boolean).join(' / ');
-
   return {
     model: pick(current.model, part.model),
     manufacturer: pick(current.manufacturer, part.manufacturer),
-    spec: pick(current.spec, spec === '' ? null : spec.slice(0, 2000)),
+    package: pick(current.package, part.package),
+    spec: pick(current.spec, part.description ? part.description.slice(0, 2000) : null),
   };
 }

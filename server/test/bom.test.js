@@ -156,6 +156,8 @@ describe('BOM 匹配', () => {
       locationId: boxId,
       cellRow: 1,
       cellCol: 2,
+      package: '0603',
+      voltage: '50V',
     });
     return { resistor: resistor.json().item, capacitor: capacitor.json().item };
   }
@@ -260,6 +262,36 @@ describe('BOM 匹配', () => {
       demand: 4,
       status: 'matched',
     });
+  });
+
+  it('封装或耐压不一致时标记为部分匹配', async () => {
+    await seed();
+    const csv = ['位号,名称,立创料号,数量,封装,耐压', 'C1,100nF 电容,,1,0805,25V'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+    expect(res.statusCode).toBe(200);
+
+    const body = res.json();
+    expect(body.summary.partial).toBe(1);
+    expect(body.summary.matched).toBe(0);
+    const row = body.groups[0];
+    expect(row.status).toBe('partial');
+    expect(row.mismatches.join(' ')).toContain('封装');
+    expect(row.mismatches.join(' ')).toContain('耐压');
+    // 参数不一致仍算本地有货，可用于取料
+    expect(body.pickup[0].items).toHaveLength(1);
+  });
+
+  it('参数一致或本地未填参数时算完全匹配', async () => {
+    await seed();
+    const csv = [
+      '位号,名称,数量,封装,耐压',
+      'C1,100nF 电容,1,0603,50v',
+      'C2,10k 电阻,1,0603,',
+    ].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+    const body = res.json();
+    expect(body.summary.partial).toBe(0);
+    expect(body.groups.every((row) => row.status === 'matched')).toBe(true);
   });
 
   it('缺少关键列时报 400', async () => {

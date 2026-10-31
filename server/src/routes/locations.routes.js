@@ -3,6 +3,7 @@ import {
   createLocation,
   listLocations,
   removeLocation,
+  swapGrid,
   updateLocation,
 } from '../services/locations.js';
 
@@ -24,6 +25,10 @@ export default async function locationRoutes(app) {
 
   app.patch('/api/locations/:id', { preHandler: app.requireAdmin }, async (request) => ({
     location: updateLocation(db, requireId(request.params.id, '位置'), request.body ?? {}),
+  }));
+
+  app.post('/api/locations/:id/swap-grid', { preHandler: app.requireAdmin }, async (request) => ({
+    location: swapGrid(db, requireId(request.params.id, '位置')),
   }));
 
   app.delete('/api/locations/:id', { preHandler: app.requireAdmin }, async (request) =>

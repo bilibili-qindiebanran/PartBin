@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createFixture, destroyFixture, createAdminAccount, request } from './helpers.js';
+import {
+  createFixture,
+  destroyFixture,
+  createAdminAccount,
+  createUserAccount,
+  request,
+} from './helpers.js';
 
 describe('元件盒（分类盒 / 大盒）', () => {
   let ctx;
@@ -173,5 +179,69 @@ describe('元件盒（分类盒 / 大盒）', () => {
       cellCount: 1,
       unassignedCount: 0,
     });
+  });
+
+  it('交换行列会把网格与格位一起转置', async () => {
+    const box = await makeBox({ rows: 3, cols: 8 });
+    await makeItem({ name: '电阻', locationId: box.id, cellRow: 2, cellCol: 5, quantity: 10 });
+    await makeItem({ name: '电容', locationId: box.id, cellRow: 1, cellCol: 8, quantity: 5 });
+
+    const swapped = await call('POST', `/api/locations/${box.id}/swap-grid`);
+    expect(swapped.statusCode).toBe(200);
+    expect(swapped.json().location).toMatchObject({ gridRows: 8, gridCols: 3 });
+
+    const detail = await call('GET', `/api/bins/${box.id}`);
+    const cells = detail.json().cells.map((cell) => `${cell.row}-${cell.col}:${cell.item.name}`);
+    expect(cells.sort()).toEqual(['5-2:电阻', '8-1:电容'].sort());
+
+    const loose = await call('POST', '/api/locations', { name: '大盒' });
+    const noGrid = await call('POST', `/api/locations/${loose.json().location.id}/swap-grid`);
+    expect(noGrid.statusCode).toBe(400);
+  });
+
+  it('盒视图总览包含格位明细、大盒清单与排序', async () => {
+    const grid = await makeBox({ rows: 3, cols: 8, name: '网格盒' });
+    const bag = await call('POST', '/api/locations', { name: '大盒' });
+    const bagId = bag.json().location.id;
+    await makeItem({ name: '电阻', locationId: grid.id, cellRow: 1, cellCol: 2, quantity: 10 });
+    await makeItem({ name: '电容', locationId: bagId, quantity: 7 });
+    await makeItem({ name: '电感', locationId: bagId, quantity: 3 });
+
+    const overview = await call('GET', '/api/bins/overview');
+    expect(overview.statusCode).toBe(200);
+    const boxes = overview.json().data;
+    expect(boxes).toHaveLength(2);
+
+    const gridBox = boxes.find((box) => box.id === grid.id);
+    expect(gridBox).toMatchObject({ isGrid: true, gridRows: 3, gridCols: 8, itemCount: 1 });
+    expect(gridBox.cells[0]).toMatchObject({ row: 1, col: 2 });
+    expect(gridBox.cells[0].item.name).toBe('电阻');
+
+    const bagBox = boxes.find((box) => box.id === bagId);
+    expect(bagBox).toMatchObject({ isGrid: false, itemCount: 2, kindCount: 2 });
+    expect(bagBox.items.map((item) => item.name).sort()).toEqual(['电容', '电感']);
+
+    const reorder = await call('POST', '/api/bins/reorder', { ids: [bagId, grid.id] });
+    expect(reorder.statusCode).toBe(200);
+    expect(reorder.json().updated).toBe(2);
+
+    const again = await call('GET', '/api/bins/overview');
+    expect(again.json().data.map((box) => box.id)).toEqual([bagId, grid.id]);
+
+    const bad = await call('POST', '/api/bins/reorder', { ids: [bagId, 9999] });
+    expect(bad.statusCode).toBe(404);
+  });
+
+  it('只读账号可以看总览但不能排序', async () => {
+    const box = await makeBox();
+    const viewerUser = await createUserAccount(ctx, 'viewer');
+    const viewerCall = (method, url, payload) =>
+      request(ctx.app, { method, url, cookie: viewerUser.cookie, payload });
+
+    const overview = await viewerCall('GET', '/api/bins/overview');
+    expect(overview.statusCode).toBe(200);
+
+    const reorder = await viewerCall('POST', '/api/bins/reorder', { ids: [box.id] });
+    expect(reorder.statusCode).toBe(403);
   });
 });

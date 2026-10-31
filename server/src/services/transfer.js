@@ -11,6 +11,8 @@ const ALIASES = {
   manufacturer: ['厂商', 'manufacturer'],
   model: ['型号', 'model'],
   spec: ['规格', 'spec'],
+  package: ['封装', 'package', 'footprint'],
+  voltage: ['耐压', '电压', 'voltage'],
   unit: ['单位', 'unit'],
   quantity: ['数量', 'quantity'],
   minQuantity: ['低库存阈值', 'minquantity', 'min_quantity', '低库存'],
@@ -147,6 +149,8 @@ function parseDraft(cells, index, line) {
       manufacturer: cell(cells, index, 'manufacturer') || null,
       model: cell(cells, index, 'model') || null,
       spec: cell(cells, index, 'spec') || null,
+      package: cell(cells, index, 'package') || null,
+      voltage: cell(cells, index, 'voltage') || null,
       unit: cell(cells, index, 'unit') || '个',
       quantity,
       minQuantity,
@@ -306,10 +310,10 @@ export function commitImport(db, text, userId) {
         const inserted = db
           .prepare(
             `INSERT INTO item (
-               code, name, category_id, location_id, manufacturer, model, spec, unit,
+               code, name, category_id, location_id, manufacturer, model, spec, package, voltage, unit,
                tracking_mode, quantity, min_quantity, price_cents, purchase_date, note,
                created_by, updated_by, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             data.code,
@@ -319,6 +323,8 @@ export function commitImport(db, text, userId) {
             data.manufacturer,
             data.model,
             data.spec,
+            data.package,
+            data.voltage,
             data.unit,
             data.trackingMode,
             data.quantity,
@@ -365,7 +371,7 @@ export function commitImport(db, text, userId) {
       db.prepare(
         `UPDATE item SET
            name = ?, code = ?, category_id = ?, location_id = ?, manufacturer = ?, model = ?,
-           spec = ?, unit = ?, tracking_mode = ?, min_quantity = ?, price_cents = ?,
+           spec = ?, package = ?, voltage = ?, unit = ?, tracking_mode = ?, min_quantity = ?, price_cents = ?,
            purchase_date = ?, note = ?, updated_by = ?, updated_at = ?
          WHERE id = ?`,
       ).run(
@@ -376,6 +382,8 @@ export function commitImport(db, text, userId) {
         data.manufacturer,
         data.model,
         data.spec,
+        data.package,
+        data.voltage,
         data.unit,
         data.trackingMode,
         data.minQuantity,
@@ -438,6 +446,8 @@ export function exportItemsCsv(db) {
       item.manufacturer,
       item.model,
       item.spec,
+      item.package,
+      item.voltage,
       item.unit,
       item.quantity,
       item.min_quantity,
@@ -449,7 +459,7 @@ export function exportItemsCsv(db) {
     ]);
 
   return toCsv(
-    ['名称', '编号', '分类', '位置', '厂商', '型号', '规格', '单位', '数量', '低库存阈值', '价格', '购买日期', '备注', '追踪模式', '已归档'],
+    ['名称', '编号', '分类', '位置', '厂商', '型号', '规格', '封装', '耐压', '单位', '数量', '低库存阈值', '价格', '购买日期', '备注', '追踪模式', '已归档'],
     rows,
   );
 }

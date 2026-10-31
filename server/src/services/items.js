@@ -17,10 +17,12 @@ import {
 
 const ITEM_SELECT = `
   SELECT i.*,
+    l.grid_rows AS location_grid_rows,
+    l.grid_cols AS location_grid_cols,
     COALESCE((
-      SELECT SUM(l.quantity - l.returned_quantity)
-      FROM loan l
-      WHERE l.item_id = i.id AND l.returned_quantity < l.quantity
+      SELECT SUM(l2.quantity - l2.returned_quantity)
+      FROM loan l2
+      WHERE l2.item_id = i.id AND l2.returned_quantity < l2.quantity
     ), 0) AS lent_quantity,
     (
       SELECT COUNT(*) FROM item_instance ii
@@ -33,6 +35,7 @@ const ITEM_SELECT = `
       LIMIT 1
     ) AS cover_photo_id
   FROM item i
+  LEFT JOIN location l ON l.id = i.location_id
 `;
 
 const SORT_COLUMNS = {
@@ -126,6 +129,10 @@ function toPublicItem(row, taxonomies) {
     categoryPath: categoryId ? (taxonomies.categoryPaths.get(categoryId) ?? null) : null,
     locationId,
     locationPath: locationId ? (taxonomies.locationPaths.get(locationId) ?? null) : null,
+    locationGridRows:
+      row.location_grid_rows == null ? null : Number(row.location_grid_rows),
+    locationGridCols:
+      row.location_grid_cols == null ? null : Number(row.location_grid_cols),
     cellRow: row.cell_row == null ? null : Number(row.cell_row),
     cellCol: row.cell_col == null ? null : Number(row.cell_col),
     lcscCode: row.lcsc_code ?? null,
@@ -133,6 +140,8 @@ function toPublicItem(row, taxonomies) {
     manufacturer: row.manufacturer ?? null,
     model: row.model ?? null,
     spec: row.spec ?? null,
+    package: row.package ?? null,
+    voltage: row.voltage ?? null,
     unit: row.unit,
     trackingMode: row.tracking_mode,
     quantity,
@@ -172,9 +181,9 @@ export function listItems(db, query = {}) {
     for (const token of tokens) {
       const like = `%${token.replace(/[\\%_]/g, '\\$&')}%`;
       where.push(
-        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\' OR i.lcsc_code LIKE ? ESCAPE '\\')`,
+        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\' OR i.lcsc_code LIKE ? ESCAPE '\\' OR i.package LIKE ? ESCAPE '\\')`,
       );
-      params.push(like, like, like, like, like);
+      params.push(like, like, like, like, like, like);
     }
   }
 
@@ -266,6 +275,8 @@ export function createItem(db, input = {}, userId) {
     const manufacturer = optionalString(input.manufacturer, '厂商', { max: 120 });
     const model = optionalString(input.model, '型号', { max: 120 });
     const spec = optionalString(input.spec, '规格', { max: 2000 });
+    const packageName = optionalString(input.package, '封装', { max: 60 });
+    const voltage = optionalString(input.voltage, '耐压', { max: 40 });
     const unit = optionalString(input.unit, '单位', { max: 10 }) ?? '个';
     const trackingMode =
       input.trackingMode == null
@@ -298,10 +309,11 @@ export function createItem(db, input = {}, userId) {
       inserted = db
         .prepare(
           `INSERT INTO item (
-             code, name, category_id, location_id, cell_row, cell_col, manufacturer, model, spec, unit,
+             code, name, category_id, location_id, cell_row, cell_col, manufacturer, model, spec,
+             package, voltage, unit,
              tracking_mode, quantity, min_quantity, price_cents, purchase_date, note, lcsc_code, lcsc_matched_at,
              created_by, updated_by, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           code,
@@ -313,6 +325,8 @@ export function createItem(db, input = {}, userId) {
           manufacturer,
           model,
           spec,
+          packageName,
+          voltage,
           unit,
           trackingMode,
           quantity,
@@ -401,6 +415,12 @@ export function updateItem(db, id, input = {}, userId) {
     }
     if (has(input, 'model')) assign('model', optionalString(input.model, '型号', { max: 120 }));
     if (has(input, 'spec')) assign('spec', optionalString(input.spec, '规格', { max: 2000 }));
+    if (has(input, 'package')) {
+      assign('package', optionalString(input.package, '封装', { max: 60 }));
+    }
+    if (has(input, 'voltage')) {
+      assign('voltage', optionalString(input.voltage, '耐压', { max: 40 }));
+    }
     if (has(input, 'unit')) assign('unit', requireString(input.unit, '单位', { min: 1, max: 10 }));
     if (has(input, 'minQuantity')) {
       assign('min_quantity', requireInt(input.minQuantity, '低库存阈值', { min: 0, max: 1000000 }));

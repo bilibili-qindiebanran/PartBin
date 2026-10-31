@@ -1,9 +1,11 @@
+import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { buildPathMap } from '../lib/tree.js';
+import { nowIso } from '../lib/time.js';
 import { requireId } from '../lib/validate.js';
 
 const ITEM_FIELDS = `
-  i.id, i.name, i.code, i.model, i.spec, i.unit, i.quantity, i.min_quantity,
+  i.id, i.name, i.code, i.model, i.package, i.voltage, i.spec, i.unit, i.quantity, i.min_quantity,
   i.cell_row, i.cell_col, i.is_archived,
   COALESCE((
     SELECT SUM(l.quantity - l.returned_quantity)
@@ -21,6 +23,8 @@ function toPublicItem(row) {
     name: row.name,
     code: row.code ?? null,
     model: row.model ?? null,
+    package: row.package ?? null,
+    voltage: row.voltage ?? null,
     spec: row.spec ?? null,
     unit: row.unit,
     quantity,
@@ -149,3 +153,91 @@ export function getBin(db, rawId) {
     })),
   };
 }
+
+/**
+ * 库存「盒视图」用的平铺总览：一次返回所有盒子的缩略信息。
+ * 分类盒带格位明细，大盒带混装清单（最多 12 种，其余用 kindCount 表示）。
+ */
+export function getBinsOverview(db) {
+  const paths = loadPaths(db);
+  const locations = db
+    .prepare('SELECT * FROM location ORDER BY sort_order ASC, id ASC')
+    .all();
+
+  const itemRows = db
+    .prepare(
+      `SELECT ${ITEM_FIELDS}, i.location_id
+       FROM item i
+       WHERE i.is_archived = 0
+       ORDER BY i.cell_row IS NULL, i.cell_row ASC, i.cell_col ASC, i.name COLLATE NOCASE ASC`,
+    )
+    .all();
+
+  const byLocation = new Map();
+  for (const row of itemRows) {
+    if (row.location_id == null) continue;
+    const key = Number(row.location_id);
+    const list = byLocation.get(key) ?? [];
+    list.push(toPublicItem(row));
+    byLocation.set(key, list);
+  }
+
+  return locations
+    .map((row) => {
+      const id = Number(row.id);
+      const items = byLocation.get(id) ?? [];
+      const isGrid = row.grid_rows != null && row.grid_cols != null;
+      const gridRows = isGrid ? Number(row.grid_rows) : null;
+      const gridCols = isGrid ? Number(row.grid_cols) : null;
+
+      return {
+        id,
+        name: row.name,
+        path: paths.get(id) ?? row.name,
+        code: row.code ?? null,
+        sortOrder: Number(row.sort_order),
+        isGrid,
+        gridRows,
+        gridCols,
+        capacity: isGrid ? gridRows * gridCols : null,
+        itemCount: items.length,
+        kindCount: items.length,
+        cells: isGrid
+          ? items
+              .filter((item) => item.cellRow != null)
+              .map((item) => ({ row: item.cellRow, col: item.cellCol, item }))
+          : [],
+        items: isGrid ? [] : items.slice(0, 12),
+      };
+    })
+    // 空的分组（柜/层）没有内容可展示，除非本身是分类盒
+    .filter((box) => box.isGrid || box.itemCount > 0);
+}
+
+/**
+ * 保存盒视图的拖拽顺序：ids 按展示顺序给出，依次写入 sort_order。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown[]} ids
+ */
+export function reorderBins(db, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw ERROR.validation('缺少排序列表');
+  }
+  if (ids.length > 500) throw ERROR.validation('一次最多排序 500 个盒子');
+
+  const normalized = ids.map((id) => requireId(id, '盒子'));
+  const unique = new Set(normalized);
+  if (unique.size !== normalized.length) throw ERROR.validation('排序列表存在重复项');
+
+  const existing = db.prepare('SELECT id FROM location WHERE id = ?');
+  const missing = normalized.filter((id) => !existing.get(id));
+  if (missing.length > 0) throw ERROR.notFound(`盒子不存在：${missing.join(', ')}`);
+
+  return withTransaction(db, () => {
+    const update = db.prepare('UPDATE location SET sort_order = ?, updated_at = ? WHERE id = ?');
+    const now = nowIso();
+    normalized.forEach((id, index) => update.run(index, now, id));
+    return { updated: normalized.length };
+  });
+}
+

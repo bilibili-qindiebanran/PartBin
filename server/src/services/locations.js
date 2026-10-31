@@ -1,3 +1,4 @@
+import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { assertNoCycle, buildPathMap, buildTree } from '../lib/tree.js';
 import { nowIso } from '../lib/time.js';
@@ -159,6 +160,31 @@ export function updateLocation(db, id, input = {}) {
   }
 
   return getLocation(db, id);
+}
+
+/**
+ * 交换分类盒的行列（8×3 → 3×8），同时把格位坐标一起转置。
+ * 用两段负数中转避免唯一索引在更新途中冲突。
+ */
+export function swapGrid(db, id) {
+  const row = db.prepare('SELECT * FROM location WHERE id = ?').get(id);
+  if (!row) throw ERROR.notFound('位置不存在');
+  if (row.grid_rows == null || row.grid_cols == null) {
+    throw ERROR.validation('该位置不是分类盒，没有行列可以交换');
+  }
+
+  return withTransaction(db, () => {
+    db.prepare(
+      'UPDATE item SET cell_row = -cell_col, cell_col = -cell_row WHERE location_id = ?',
+    ).run(id);
+    db.prepare(
+      'UPDATE item SET cell_row = -cell_row, cell_col = -cell_col WHERE location_id = ?',
+    ).run(id);
+    db.prepare(
+      'UPDATE location SET grid_rows = grid_cols, grid_cols = grid_rows, updated_at = ? WHERE id = ?',
+    ).run(nowIso(), id);
+    return getLocation(db, id);
+  });
 }
 
 /** 删除位置：引用它的物料与子位置会被置空 */

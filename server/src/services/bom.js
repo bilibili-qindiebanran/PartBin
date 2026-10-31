@@ -30,6 +30,7 @@ const HEADER_ALIASES = {
   quantity: ['quantity', '数量', 'qty', '用量', '单板用量', '每板用量'],
   model: ['model', '型号', 'partnumber', 'part number', '料号', '规格型号'],
   package: ['package', '封装', 'footprint', '封装/规格', 'package/footprint'],
+  voltage: ['voltage', '耐压', '电压', '额定电压', 'vds', 'vmax', '工作电压'],
   manufacturer: ['manufacturer', '厂商', '品牌', 'mfr'],
   spec: ['spec', 'description', '描述', '规格', '参数'],
 };
@@ -104,6 +105,32 @@ function toCellLabel(row, col) {
   return `格位 ${String.fromCharCode(64 + Number(row))}${col}`;
 }
 
+/** 参数归一化：去空白与大小写差异，1.8V 与 1.8 V 视为相同 */
+function normalizeParam(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[（）()]/g, '');
+}
+
+/**
+ * 对比 BOM 与本地物料的封装/耐压：只在实际两边都有值时判断。
+ * @returns {string[]} 不一致项的说明
+ */
+function compareParams(group, item) {
+  const mismatches = [];
+  const check = (label, bomValue, itemValue) => {
+    const a = normalizeParam(bomValue);
+    const b = normalizeParam(itemValue);
+    if (!a || !b || a === b) return;
+    mismatches.push(`${label}不一致：BOM ${bomValue} / 本地 ${itemValue}`);
+  };
+
+  check('封装', group.package, item.package);
+  check('耐压', group.voltage, item.voltage);
+  return mismatches;
+}
+
 function buildLocationMaps(db) {
   const rows = db.prepare('SELECT id, parent_id, name FROM location').all();
   const paths = buildPathMap(rows);
@@ -119,7 +146,7 @@ function buildLocationMaps(db) {
 function buildItemIndex(db) {
   const items = db
     .prepare(
-      `SELECT i.id, i.name, i.code, i.model, i.spec, i.unit, i.quantity, i.lcsc_code,
+      `SELECT i.id, i.name, i.code, i.model, i.spec, i.package, i.voltage, i.unit, i.quantity, i.lcsc_code,
               i.location_id, i.cell_row, i.cell_col, i.is_archived,
               COALESCE((
                 SELECT SUM(l.quantity - l.returned_quantity) FROM loan l
@@ -209,6 +236,7 @@ function groupRows(rows) {
       existing.perSet += perLine;
       if (designator) existing.designators.push(designator);
       if (!existing.package) existing.package = cell(cells, index, 'package');
+      if (!existing.voltage) existing.voltage = cell(cells, index, 'voltage');
       continue;
     }
 
@@ -219,6 +247,7 @@ function groupRows(rows) {
       lcscCode: lcscCode || '',
       model,
       package: cell(cells, index, 'package'),
+      voltage: cell(cells, index, 'voltage'),
       manufacturer: cell(cells, index, 'manufacturer'),
       spec: cell(cells, index, 'spec'),
       perSet: perLine,
@@ -261,7 +290,9 @@ export function matchBom(db, input = {}) {
     const demand = sets == null ? perSet : perSet * sets;
 
     let status = 'matched';
+    const mismatches = item ? compareParams(group, item) : [];
     if (!item) status = ambiguous ? 'ambiguous' : 'missing';
+    else if (mismatches.length > 0) status = 'partial';
 
     const stock = item ? item.available : null;
     const shortage = item ? Math.max(0, demand - stock) : demand;
@@ -279,7 +310,8 @@ export function matchBom(db, input = {}) {
       name: group.name || item?.name || '',
       lcscCode: group.lcscCode || item?.lcsc_code || null,
       model: group.model || item?.model || null,
-      package: group.package || null,
+      package: group.package || item?.package || null,
+      voltage: group.voltage || item?.voltage || null,
       manufacturer: group.manufacturer || null,
       perSet,
       demand,
@@ -287,6 +319,7 @@ export function matchBom(db, input = {}) {
       shortage,
       setsPossible,
       status,
+      mismatches,
       matchedBy: by,
       ambiguous: ambiguous ?? null,
       itemId: item?.id ?? null,
@@ -303,6 +336,7 @@ export function matchBom(db, input = {}) {
     rows: rows.length - 1,
     groups: report.length,
     matched: report.filter((row) => row.status === 'matched').length,
+    partial: report.filter((row) => row.status === 'partial').length,
     missing: report.filter((row) => row.status === 'missing').length,
     ambiguous: report.filter((row) => row.status === 'ambiguous').length,
     shortageGroups: shortages.length,
@@ -314,7 +348,7 @@ export function matchBom(db, input = {}) {
   // 取料清单：按位置分组，方便一次走完所有柜子
   const pickupMap = new Map();
   for (const row of report) {
-    if (row.status !== 'matched' || !row.location) continue;
+    if ((row.status !== 'matched' && row.status !== 'partial') || !row.location) continue;
     const bucket = pickupMap.get(row.location) ?? [];
     bucket.push({
       itemId: row.itemId,

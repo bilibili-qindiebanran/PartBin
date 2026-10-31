@@ -180,7 +180,8 @@ describe('立创料号匹配', () => {
     const item = res.json().item;
     expect(item.model).toBe('KT-0603R');
     expect(item.manufacturer).toBe('Hubei KENTO Elec');
-    expect(item.spec).toContain('0603');
+    expect(item.package).toBe('0603');
+    expect(item.spec).toContain('1.8V');
     expect(item.lcscCode).toBe('C2286');
     expect(item.lcscMatchedAt).toBeTruthy();
     expect(res.json().part.name).toBe('0603 红灯 高亮');
