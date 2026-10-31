@@ -1,12 +1,12 @@
 <template>
-  <div class="item-table-wrap">
+  <div ref="wrapRef" class="item-table-wrap">
     <el-table
       v-loading="loading"
       :data="items"
       :row-class-name="rowClass"
       class="item-table"
       empty-text="还没有物料"
-      @row-click="(row) => emit('open', row)"
+      @row-click="onRowClick"
       @row-contextmenu="onContextMenu"
     >
       <el-table-column label="物料" min-width="250">
@@ -80,13 +80,13 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="更新" width="116">
+      <el-table-column label="更新" width="132" class-name="cell-date">
         <template #default="{ row }">{{ formatDate(row.updatedAt) }}</template>
       </el-table-column>
     </el-table>
 
     <p class="item-table__hint">
-      点击行查看详情{{ canWrite ? '，右键可入库、出库、编辑或归档' : '' }}。
+      点击行查看详情{{ canWrite ? '；右键或长按可入库、出库、编辑或归档' : '' }}。
     </p>
 
     <Teleport to="body">
@@ -130,7 +130,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
   Bottom,
   Box,
@@ -143,7 +143,7 @@ import {
 import BinThumb from '@/components/BinThumb.vue';
 import { formatDate } from '@/lib/format';
 
-defineProps({
+const props = defineProps({
   items: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
   canWrite: { type: Boolean, default: false },
@@ -153,6 +153,11 @@ const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in', 'sto
 
 const MENU_WIDTH = 168;
 const MENU_HEIGHT = 240;
+/** 长按判定：按住 500ms 且位移不超过 10px */
+const LONG_PRESS_MS = 500;
+const MOVE_TOLERANCE = 10;
+
+const wrapRef = ref(null);
 
 const menu = reactive({
   visible: false,
@@ -161,21 +166,78 @@ const menu = reactive({
   row: null,
 });
 
+let pressTimer = null;
+let pressStart = null;
+let suppressClickUntil = 0;
+
 function closeMenu() {
   menu.visible = false;
   menu.row = null;
 }
 
-function onContextMenu(row, column, event) {
-  event?.preventDefault?.();
-  if (!row) return;
-
-  const x = Math.min(event.clientX, window.innerWidth - MENU_WIDTH - 8);
-  const y = Math.min(event.clientY, window.innerHeight - MENU_HEIGHT - 8);
+function openMenu(row, clientX, clientY) {
+  const x = Math.min(clientX, window.innerWidth - MENU_WIDTH - 8);
+  const y = Math.min(clientY, window.innerHeight - MENU_HEIGHT - 8);
   menu.row = row;
   menu.x = Math.max(8, x);
   menu.y = Math.max(8, y);
   menu.visible = true;
+}
+
+function onRowClick(row) {
+  // 长按弹出菜单后浏览器会补一个 click，需要拦掉以免��接跳转详情
+  if (Date.now() < suppressClickUntil) return;
+  emit('open', row);
+}
+
+function onContextMenu(row, column, event) {
+  event?.preventDefault?.();
+  if (!row) return;
+  openMenu(row, event.clientX, event.clientY);
+}
+
+function clearPressTimer() {
+  if (pressTimer) {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+  pressStart = null;
+}
+
+/** 从触摸点所在的表格行反推物料 */
+function rowFromEvent(event) {
+  const tr = event.target?.closest?.('.el-table__body tr.el-table__row');
+  const body = tr?.parentElement;
+  if (!tr || !body) return null;
+  const index = [...body.children].indexOf(tr);
+  return index >= 0 ? (props.items[index] ?? null) : null;
+}
+
+function onTouchStart(event) {
+  if (event.touches?.length !== 1) return;
+  const touch = event.touches[0];
+  const row = rowFromEvent(event);
+  clearPressTimer();
+  if (!row) return;
+
+  pressStart = { x: touch.clientX, y: touch.clientY };
+  pressTimer = setTimeout(() => {
+    pressTimer = null;
+    suppressClickUntil = Date.now() + 700;
+    openMenu(row, touch.clientX, touch.clientY);
+  }, LONG_PRESS_MS);
+}
+
+function onTouchMove(event) {
+  if (!pressTimer || !pressStart) return;
+  const touch = event.touches?.[0];
+  if (!touch) {
+    clearPressTimer();
+    return;
+  }
+  const dx = Math.abs(touch.clientX - pressStart.x);
+  const dy = Math.abs(touch.clientY - pressStart.y);
+  if (dx > MOVE_TOLERANCE || dy > MOVE_TOLERANCE) clearPressTimer();
 }
 
 function run(action) {
@@ -186,6 +248,8 @@ function run(action) {
 
 function onGlobalPointer(event) {
   if (!menu.visible) return;
+  // 长按松手时浏览器会补发 click，别把刚弹出的菜单立刻关掉
+  if (Date.now() < suppressClickUntil) return;
   if (event.target?.closest?.('.ctx')) return;
   closeMenu();
 }
@@ -195,6 +259,12 @@ function onKeydown(event) {
 }
 
 onMounted(() => {
+  const el = wrapRef.value;
+  el?.addEventListener('touchstart', onTouchStart, { passive: true });
+  el?.addEventListener('touchmove', onTouchMove, { passive: true });
+  el?.addEventListener('touchend', clearPressTimer, { passive: true });
+  el?.addEventListener('touchcancel', clearPressTimer, { passive: true });
+
   window.addEventListener('click', onGlobalPointer, true);
   window.addEventListener('contextmenu', onGlobalPointer, true);
   window.addEventListener('keydown', onKeydown);
@@ -203,6 +273,13 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearPressTimer();
+  const el = wrapRef.value;
+  el?.removeEventListener('touchstart', onTouchStart);
+  el?.removeEventListener('touchmove', onTouchMove);
+  el?.removeEventListener('touchend', clearPressTimer);
+  el?.removeEventListener('touchcancel', clearPressTimer);
+
   window.removeEventListener('click', onGlobalPointer, true);
   window.removeEventListener('contextmenu', onGlobalPointer, true);
   window.removeEventListener('keydown', onKeydown);
@@ -239,6 +316,10 @@ function rowClass({ row }) {
 <style scoped>
 .item-table-wrap {
   position: relative;
+}
+
+:deep(.cell-date .cell) {
+  white-space: nowrap;
 }
 
 .item-table {
@@ -417,5 +498,8 @@ function rowClass({ row }) {
 
 :deep(.el-table__row) {
   cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 </style>
