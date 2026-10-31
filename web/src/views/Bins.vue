@@ -241,7 +241,7 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { Aim, Grid, Refresh } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
@@ -250,6 +250,7 @@ import { useAuthStore } from '@/stores/auth';
 
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 
 const boxes = ref([]);
 const boxesLoading = ref(false);
@@ -447,9 +448,22 @@ watch(itemQuery, (value) => {
 
 onMounted(async () => {
   await loadBoxes();
-  const first = boxes.value[0];
-  if (first) await openBox(first.id);
+  openFromQuery();
 });
+
+watch(
+  () => route.query.id,
+  () => openFromQuery(),
+);
+
+async function openFromQuery() {
+  const wanted = Number(route.query.id);
+  const target = Number.isInteger(wanted)
+    ? boxes.value.find((box) => box.id === wanted)
+    : null;
+  const next = target ?? boxes.value[0];
+  if (next) await openBox(next.id);
+}
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer);

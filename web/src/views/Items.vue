@@ -1,11 +1,24 @@
 <template>
   <div class="page">
     <PageHeader title="库存" :subtitle="`共 ${total} 种物料`">
-      <template v-if="auth.canWrite" #actions>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建物料</el-button>
+      <template #actions>
+        <el-radio-group v-model="view" class="view-switch" size="small">
+          <el-radio-button value="table">表格</el-radio-button>
+          <el-radio-button value="box">盒视图</el-radio-button>
+        </el-radio-group>
+        <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
+          新建物料
+        </el-button>
       </template>
     </PageHeader>
 
+    <BinWall
+      v-if="view === 'box'"
+      :can-write="auth.canWrite"
+      @open-item="openDetail"
+    />
+
+    <template v-else>
     <section class="toolbar card">
       <el-input
         v-model="filters.q"
@@ -105,6 +118,7 @@
         @current-change="load"
       />
     </div>
+    </template>
 
     <ItemDialog
       v-model="dialogVisible"
@@ -133,6 +147,7 @@ import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
 import ItemCard from '@/components/ItemCard.vue';
+import BinWall from '@/components/BinWall.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
 import { useBreakpoint } from '@/composables/useBreakpoint';
@@ -156,6 +171,12 @@ const editingItem = ref(null);
 const movementVisible = ref(false);
 const movementItem = ref(null);
 const movementType = ref('in');
+
+const VIEW_KEY = 'partbin:items-view';
+const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
+watch(view, (value) => {
+  localStorage.setItem(VIEW_KEY, value);
+});
 
 const filters = reactive({
   q: '',
