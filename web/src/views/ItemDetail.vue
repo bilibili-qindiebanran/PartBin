@@ -99,6 +99,14 @@
               <dd>{{ item.model || '—' }}</dd>
             </div>
             <div>
+              <dt>封装</dt>
+              <dd>{{ item.package || '—' }}</dd>
+            </div>
+            <div>
+              <dt>耐压</dt>
+              <dd>{{ item.voltage || '—' }}</dd>
+            </div>
+            <div>
               <dt>规格</dt>
               <dd class="pre">{{ item.spec || '—' }}</dd>
             </div>

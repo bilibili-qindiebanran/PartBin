@@ -17,7 +17,9 @@
     </div>
 
     <p class="item-card__path">
-      {{ item.locationPath || '未指定位置' }} · {{ item.categoryPath || '未分类' }}
+      {{ item.locationPath || '未指定位置' }}
+      <b v-if="item.cellRow" class="cell-chip">{{ cellLabel }}</b>
+      · {{ item.categoryPath || '未分类' }}
     </p>
 
     <div class="item-card__foot">
@@ -51,14 +53,30 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import { Box } from '@element-plus/icons-vue';
 
-defineProps({
+const props = defineProps({
   item: { type: Object, required: true },
   canWrite: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
+
+function rowLetter(row) {
+  let value = Number(row);
+  let text = '';
+  while (value > 0) {
+    const rest = (value - 1) % 26;
+    text = String.fromCharCode(65 + rest) + text;
+    value = Math.floor((value - 1) / 26);
+  }
+  return text;
+}
+
+const cellLabel = computed(() =>
+  props.item.cellRow ? `${rowLetter(props.item.cellRow)}${props.item.cellCol}` : '',
+);
 </script>
 
 <style scoped>
@@ -141,6 +159,17 @@ const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cell-chip {
+  margin: 0 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .item-card__foot {

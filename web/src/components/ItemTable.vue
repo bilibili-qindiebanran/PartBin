@@ -23,8 +23,27 @@
       <template #default="{ row }">{{ row.categoryPath || '—' }}</template>
     </el-table-column>
 
-    <el-table-column label="位置" min-width="150" show-overflow-tooltip>
-      <template #default="{ row }">{{ row.locationPath || '—' }}</template>
+    <el-table-column label="位置" min-width="190">
+      <template #default="{ row }">
+        <div v-if="row.locationPath" class="loc">
+          <BinThumb
+            v-if="row.locationGridRows"
+            class="loc__thumb"
+            size="xs"
+            :rows="row.locationGridRows"
+            :cols="row.locationGridCols"
+            :cells="cellOf(row)"
+            :highlight="row.cellRow ? { row: row.cellRow, col: row.cellCol } : null"
+          />
+          <span class="loc__path" :title="row.locationPath">
+            {{ row.locationPath }}
+            <b v-if="row.cellRow" class="loc__cell">
+              {{ cellLabel(row) }}
+            </b>
+          </span>
+        </div>
+        <span v-else class="muted">—</span>
+      </template>
     </el-table-column>
 
     <el-table-column label="拥有" width="96" align="right">
@@ -99,6 +118,7 @@
 
 <script setup>
 import { Box } from '@element-plus/icons-vue';
+import BinThumb from '@/components/BinThumb.vue';
 import { formatDate } from '@/lib/format';
 
 defineProps({
@@ -108,6 +128,25 @@ defineProps({
 });
 
 const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in', 'stock-out']);
+
+function rowLetter(row) {
+  let value = Number(row);
+  let text = '';
+  while (value > 0) {
+    const rest = (value - 1) % 26;
+    text = String.fromCharCode(65 + rest) + text;
+    value = Math.floor((value - 1) / 26);
+  }
+  return text;
+}
+
+function cellLabel(row) {
+  return row.cellRow ? `${rowLetter(row.cellRow)}${row.cellCol}` : '';
+}
+
+function cellOf(row) {
+  return row.cellRow ? [{ row: row.cellRow, col: row.cellCol, item: row }] : [];
+}
 
 function rowClass({ row }) {
   if (row.isArchived) return 'row-archived';
@@ -181,6 +220,40 @@ function rowClass({ row }) {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.loc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.loc__thumb {
+  flex-shrink: 0;
+  width: 46px;
+}
+
+.loc__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loc__cell {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--ink-400);
 }
 
 :deep(.row-low) {
