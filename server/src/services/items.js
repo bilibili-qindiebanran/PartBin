@@ -64,6 +64,39 @@ function ensureRef(db, table, id, label) {
   return id;
 }
 
+/**
+ * 校验格位：两者必须同时给或同时为空，且落在所属分类盒的网格内。
+ * @returns {{ cellRow: number|null, cellCol: number|null }}
+ */
+function resolveCell(db, locationId, cellRow, cellCol) {
+  if (cellRow == null && cellCol == null) return { cellRow: null, cellCol: null };
+  if (cellRow == null || cellCol == null) {
+    throw ERROR.validation('格位需要同时指定行与列');
+  }
+  if (locationId == null) {
+    throw ERROR.validation('指定格位前请先选择位置');
+  }
+
+  const location = db.prepare('SELECT * FROM location WHERE id = ?').get(locationId);
+  if (!location) throw ERROR.validation('位置不存在');
+  if (location.grid_rows == null || location.grid_cols == null) {
+    throw ERROR.validation('该位置不是分类盒，不支持格位');
+  }
+  if (cellRow > Number(location.grid_rows) || cellCol > Number(location.grid_cols)) {
+    throw ERROR.validation(
+      `格位超出范围：该盒为 ${location.grid_rows} 行 × ${location.grid_cols} 列`,
+    );
+  }
+  return { cellRow, cellCol };
+}
+
+function parseCell(input) {
+  return {
+    cellRow: optionalInt(input.cellRow, '格位行', { min: 1, max: 52 }),
+    cellCol: optionalInt(input.cellCol, '格位列', { min: 1, max: 52 }),
+  };
+}
+
 function toCents(value) {
   const price = optionalNumber(value, '价格', { min: 0, max: 1e9 });
   return price == null ? null : Math.round(price * 100);
@@ -84,6 +117,8 @@ function toPublicItem(row, taxonomies) {
     categoryPath: categoryId ? (taxonomies.categoryPaths.get(categoryId) ?? null) : null,
     locationId,
     locationPath: locationId ? (taxonomies.locationPaths.get(locationId) ?? null) : null,
+    cellRow: row.cell_row == null ? null : Number(row.cell_row),
+    cellCol: row.cell_col == null ? null : Number(row.cell_col),
     manufacturer: row.manufacturer ?? null,
     model: row.model ?? null,
     spec: row.spec ?? null,
@@ -226,6 +261,13 @@ export function createItem(db, input = {}, userId) {
         ? 'quantity'
         : requireEnum(input.trackingMode, '追踪模式', ['quantity', 'instance']);
     const minQuantity = optionalInt(input.minQuantity, '低库存阈值', { min: 0, max: 1000000 }) ?? 0;
+    const parsedCell = parseCell(input);
+    const { cellRow, cellCol } = resolveCell(
+      db,
+      locationId,
+      parsedCell.cellRow,
+      parsedCell.cellCol,
+    );
     const priceCents = toCents(input.price);
     const purchaseDate = optionalDate(input.purchaseDate, '购买日期');
     const note = optionalString(input.note, '备注', { max: 2000 });
@@ -243,16 +285,18 @@ export function createItem(db, input = {}, userId) {
       inserted = db
         .prepare(
           `INSERT INTO item (
-             code, name, category_id, location_id, manufacturer, model, spec, unit,
+             code, name, category_id, location_id, cell_row, cell_col, manufacturer, model, spec, unit,
              tracking_mode, quantity, min_quantity, price_cents, purchase_date, note,
              created_by, updated_by, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           code,
           name,
           categoryId,
           locationId,
+          cellRow,
+          cellCol,
           manufacturer,
           model,
           spec,
@@ -269,7 +313,12 @@ export function createItem(db, input = {}, userId) {
           now,
         );
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('物料编号已存在');
+      if (String(error.message).includes('UNIQUE')) {
+        if (String(error.message).includes('item.location_id')) {
+          throw ERROR.duplicate('该格位已被其他物料占用');
+        }
+        throw ERROR.duplicate('物料编号已存在');
+      }
       throw error;
     }
 
@@ -311,12 +360,27 @@ export function updateItem(db, id, input = {}, userId) {
         ensureRef(db, 'category', optionalId(input.categoryId, '分类'), '分类'),
       );
     }
+    const nextLocationId = has(input, 'locationId')
+      ? ensureRef(db, 'location', optionalId(input.locationId, '位置'), '位置')
+      : current.location_id == null
+        ? null
+        : Number(current.location_id);
     if (has(input, 'locationId')) {
-      assign(
-        'location_id',
-        ensureRef(db, 'location', optionalId(input.locationId, '位置'), '位置'),
-      );
+      assign('location_id', nextLocationId);
     }
+
+    const cellTouched = has(input, 'cellRow') || has(input, 'cellCol');
+    if (cellTouched) {
+      const { cellRow, cellCol } = parseCell(input);
+      const cell = resolveCell(db, nextLocationId, cellRow, cellCol);
+      assign('cell_row', cell.cellRow);
+      assign('cell_col', cell.cellCol);
+    } else if (nextLocationId !== (current.location_id == null ? null : Number(current.location_id))) {
+      // 换到新位置后旧格位失效，避免出现越界格位
+      assign('cell_row', null);
+      assign('cell_col', null);
+    }
+
     if (has(input, 'manufacturer')) {
       assign('manufacturer', optionalString(input.manufacturer, '厂商', { max: 120 }));
     }
@@ -360,7 +424,12 @@ export function updateItem(db, id, input = {}, userId) {
     try {
       db.prepare(`UPDATE item SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('物料编号已存在');
+      if (String(error.message).includes('UNIQUE')) {
+        if (String(error.message).includes('item.location_id')) {
+          throw ERROR.duplicate('该格位已被其他物料占用');
+        }
+        throw ERROR.duplicate('物料编号已存在');
+      }
       throw error;
     }
 
