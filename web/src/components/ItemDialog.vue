@@ -163,6 +163,36 @@
 
       <h4 class="section-title">补充信息</h4>
       <div class="form-grid">
+        <label class="field field--full">
+          <span>立创料号</span>
+          <div class="lcsc-row">
+            <el-input
+              v-model="form.lcscCode"
+              maxlength="20"
+              placeholder="如 C2286，可粘贴商城链接"
+              clearable
+            />
+            <el-button
+              :loading="lcscLoading"
+              :disabled="!form.lcscCode.trim()"
+              @click="lookupLcsc"
+            >
+              匹配
+            </el-button>
+          </div>
+          <p v-if="lcscPart" class="lcsc-preview">
+            <strong>{{ lcscPart.code }}</strong> · {{ lcscPart.name }}
+            <template v-if="lcscPart.package"> · {{ lcscPart.package }}</template>
+            <template v-if="lcscPart.stock != null"> · 库存 {{ lcscPart.stock }}</template>
+            <a v-if="lcscPart.sourceUrl" :href="lcscPart.sourceUrl" target="_blank" rel="noreferrer">
+              查看商城
+            </a>
+          </p>
+          <p v-else class="hint">
+            输入料号后点「匹配」，会自动填充空白的型号、厂商与规格；失败时仍可手写。
+          </p>
+        </label>
+
         <label class="field">
           <span>厂商</span>
           <el-input v-model="form.manufacturer" maxlength="120" placeholder="ST / TI / 正点原子" />
@@ -221,9 +251,13 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'saved']);
 
 const saving = ref(false);
+const lcscLoading = ref(false);
+const lcscPart = ref(null);
+const lcscMatched = ref(false);
 const form = reactive({
   name: '',
   code: '',
+  lcscCode: '',
   categoryId: null,
   locationId: null,
   cellRow: null,
@@ -289,9 +323,12 @@ watch(
 
 function fillForm() {
   const item = props.item;
+  lcscPart.value = null;
+  lcscMatched.value = false;
   Object.assign(form, {
     name: item?.name ?? '',
     code: item?.code ?? '',
+    lcscCode: item?.lcscCode ?? '',
     categoryId: item?.categoryId ?? null,
     locationId: item?.locationId ?? null,
     cellRow: item?.cellRow ?? null,
@@ -309,10 +346,39 @@ function fillForm() {
   });
 }
 
+async function lookupLcsc() {
+  const code = form.lcscCode.trim();
+  if (!code) {
+    ElMessage.warning('请先填写立创料号');
+    return;
+  }
+  lcscLoading.value = true;
+  try {
+    const data = await api('/api/lcsc/lookup', { method: 'POST', body: { code } });
+    if (!data?.part) throw new Error('未获取到元件信息');
+    lcscPart.value = data.part;
+    lcscMatched.value = true;
+    form.lcscCode = data.part.code;
+    if (!form.name.trim()) form.name = data.part.name ?? '';
+    if (!form.model.trim()) form.model = data.part.model ?? '';
+    if (!form.manufacturer.trim()) form.manufacturer = data.part.manufacturer ?? '';
+    if (!form.spec.trim()) {
+      form.spec = [data.part.package, data.part.description].filter(Boolean).join(' / ');
+    }
+    ElMessage.success(data.cached ? '已使用缓存结果填充' : '已从立创商城匹配');
+  } catch (error) {
+    lcscMatched.value = false;
+    ElMessage.error(error.message || '匹配失败，请手动填写');
+  } finally {
+    lcscLoading.value = false;
+  }
+}
+
 function buildPayload() {
   const payload = {
     name: form.name.trim(),
     code: form.code.trim() || null,
+    lcscCode: form.lcscCode.trim() || null,
     categoryId: form.categoryId ?? null,
     locationId: form.locationId ?? null,
     trackingMode: form.trackingMode,
@@ -329,6 +395,8 @@ function buildPayload() {
   if (!isEdit.value && form.trackingMode === 'quantity') {
     payload.quantity = form.quantity ?? 0;
   }
+
+  if (lcscMatched.value) payload.lcscMatched = true;
 
   if (selectedLocation.value?.isGrid) {
     payload.cellRow = form.cellRow ?? null;
@@ -411,6 +479,30 @@ async function submit() {
 
 .full-control {
   width: 100%;
+}
+
+.lcsc-row {
+  display: flex;
+  gap: 8px;
+}
+
+.lcsc-row .el-input {
+  flex: 1;
+}
+
+.lcsc-preview {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(10, 122, 122, 0.08);
+  color: var(--ink-700);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.lcsc-preview a {
+  margin-left: 6px;
+  color: var(--primary);
 }
 
 .hint {

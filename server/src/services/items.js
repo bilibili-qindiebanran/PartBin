@@ -2,6 +2,7 @@ import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { buildPathMap, descendantIds } from '../lib/tree.js';
 import { nowIso } from '../lib/time.js';
+import { normalizeLcscCode, lookupLcsc, lcscToItemFields } from './lcsc.js';
 import {
   optionalDate,
   optionalId,
@@ -97,6 +98,14 @@ function parseCell(input) {
   };
 }
 
+/** 可空立创料号：空值返回 null，否则归一化为 Cxxxx */
+function normalizeOptionalLcsc(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (text === '') return null;
+  return normalizeLcscCode(text);
+}
+
 function toCents(value) {
   const price = optionalNumber(value, '价格', { min: 0, max: 1e9 });
   return price == null ? null : Math.round(price * 100);
@@ -119,6 +128,8 @@ function toPublicItem(row, taxonomies) {
     locationPath: locationId ? (taxonomies.locationPaths.get(locationId) ?? null) : null,
     cellRow: row.cell_row == null ? null : Number(row.cell_row),
     cellCol: row.cell_col == null ? null : Number(row.cell_col),
+    lcscCode: row.lcsc_code ?? null,
+    lcscMatchedAt: row.lcsc_matched_at ?? null,
     manufacturer: row.manufacturer ?? null,
     model: row.model ?? null,
     spec: row.spec ?? null,
@@ -161,9 +172,9 @@ export function listItems(db, query = {}) {
     for (const token of tokens) {
       const like = `%${token.replace(/[\\%_]/g, '\\$&')}%`;
       where.push(
-        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\')`,
+        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\' OR i.lcsc_code LIKE ? ESCAPE '\\')`,
       );
-      params.push(like, like, like, like);
+      params.push(like, like, like, like, like);
     }
   }
 
@@ -271,6 +282,8 @@ export function createItem(db, input = {}, userId) {
     const priceCents = toCents(input.price);
     const purchaseDate = optionalDate(input.purchaseDate, '购买日期');
     const note = optionalString(input.note, '备注', { max: 2000 });
+    const lcscCode = normalizeOptionalLcsc(input.lcscCode);
+    const lcscMatchedAt = lcscCode && input.lcscMatched === true ? nowIso() : null;
 
     let quantity = 0;
     if (trackingMode === 'quantity') {
@@ -286,9 +299,9 @@ export function createItem(db, input = {}, userId) {
         .prepare(
           `INSERT INTO item (
              code, name, category_id, location_id, cell_row, cell_col, manufacturer, model, spec, unit,
-             tracking_mode, quantity, min_quantity, price_cents, purchase_date, note,
+             tracking_mode, quantity, min_quantity, price_cents, purchase_date, note, lcsc_code, lcsc_matched_at,
              created_by, updated_by, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           code,
@@ -307,6 +320,8 @@ export function createItem(db, input = {}, userId) {
           priceCents,
           purchaseDate,
           note,
+          lcscCode,
+          lcscMatchedAt,
           userId,
           userId,
           now,
@@ -399,6 +414,12 @@ export function updateItem(db, id, input = {}, userId) {
     }
     if (has(input, 'note')) assign('note', optionalString(input.note, '备注', { max: 2000 }));
 
+    if (has(input, 'lcscCode')) {
+      const lcscCode = normalizeOptionalLcsc(input.lcscCode);
+      assign('lcsc_code', lcscCode);
+      assign('lcsc_matched_at', lcscCode && input.lcscMatched === true ? nowIso() : null);
+    }
+
     if (has(input, 'trackingMode')) {
       const mode = requireEnum(input.trackingMode, '追踪模式', ['quantity', 'instance']);
       if (mode !== current.tracking_mode) {
@@ -437,9 +458,31 @@ export function updateItem(db, id, input = {}, userId) {
   });
 }
 
+/**
+ * 用立创料号匹配并补全物料信息（只填空字段）。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} id
+ * @param {{ code?: string, userId?: number|null } & Record<string, unknown>} [options]
+ */
+export async function matchItemLcsc(db, id, options = {}) {
+  const item = getItem(db, id);
+  const code = options.code ?? item.lcscCode;
+  if (!code) throw ERROR.validation('请先填写立创料号');
+
+  const result = await lookupLcsc(db, code, options);
+  const fields = lcscToItemFields(result.part, item);
+  const updated = updateItem(
+    db,
+    id,
+    { ...fields, lcscCode: result.part.code, lcscMatched: true },
+    options.userId ?? null,
+  );
+
+  return { item: updated, part: result.part, cached: result.cached };
+}
+
 /** 归档 / 恢复 */
-export function setItemArchived(db, id, archived, userId) {
-  const row = getRow(db, id);
+export function setItemArchived(db, id, archived, userId) {  const row = getRow(db, id);
   if (!row) throw ERROR.notFound('物料不存在');
 
   db.prepare('UPDATE item SET is_archived = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(
