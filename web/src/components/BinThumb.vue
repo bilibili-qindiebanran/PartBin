@@ -17,7 +17,7 @@
           <span v-if="showLetter" class="bin-thumb__letter">{{ cell.label }}</span>
         </span>
       </el-tooltip>
-      <span class="bin-thumb__cell" :class="cellClass(cell)" @click="handleClick(cell, $event)">
+      <span v-else class="bin-thumb__cell" :class="cellClass(cell)" @click="handleClick(cell, $event)">
         <span v-if="showLetter && cell.item" class="bin-thumb__letter">{{ cell.label }}</span>
       </span>
     </template>
