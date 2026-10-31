@@ -203,6 +203,17 @@
           <el-input v-model="form.model" maxlength="120" placeholder="STM32F103C8T6" />
         </label>
 
+        <label class="field">
+          <span>封装</span>
+          <el-input v-model="form.package" maxlength="60" placeholder="0603 / SOP-8 / LQFP-48" />
+        </label>
+
+        <label class="field">
+          <span>耐压</span>
+          <el-input v-model="form.voltage" maxlength="40" placeholder="16V / 50V" />
+          <p class="hint">封装与耐压会在 BOM 匹配时与表格对比。</p>
+        </label>
+
         <label class="field field--full">
           <span>规格</span>
           <el-input
@@ -268,6 +279,8 @@ const form = reactive({
   minQuantity: 0,
   manufacturer: '',
   model: '',
+  package: '',
+  voltage: '',
   spec: '',
   price: null,
   purchaseDate: null,
@@ -339,6 +352,8 @@ function fillForm() {
     minQuantity: item?.minQuantity ?? 0,
     manufacturer: item?.manufacturer ?? '',
     model: item?.model ?? '',
+    package: item?.package ?? '',
+    voltage: item?.voltage ?? '',
     spec: item?.spec ?? '',
     price: item?.price ?? null,
     purchaseDate: item?.purchaseDate ?? null,
@@ -362,9 +377,8 @@ async function lookupLcsc() {
     if (!form.name.trim()) form.name = data.part.name ?? '';
     if (!form.model.trim()) form.model = data.part.model ?? '';
     if (!form.manufacturer.trim()) form.manufacturer = data.part.manufacturer ?? '';
-    if (!form.spec.trim()) {
-      form.spec = [data.part.package, data.part.description].filter(Boolean).join(' / ');
-    }
+    if (!form.package.trim()) form.package = data.part.package ?? '';
+    if (!form.spec.trim()) form.spec = data.part.description ?? '';
     ElMessage.success(data.cached ? '已使用缓存结果填充' : '已从立创商城匹配');
   } catch (error) {
     lcscMatched.value = false;
@@ -386,6 +400,8 @@ function buildPayload() {
     minQuantity: form.minQuantity ?? 0,
     manufacturer: form.manufacturer.trim() || null,
     model: form.model.trim() || null,
+    package: form.package.trim() || null,
+    voltage: form.voltage.trim() || null,
     spec: form.spec.trim() || null,
     price: form.price ?? null,
     purchaseDate: form.purchaseDate || null,
