@@ -50,6 +50,44 @@
           />
         </label>
 
+        <label v-if="selectedLocation?.isGrid" class="field">
+          <span>格位行（1–{{ selectedLocation.gridRows }}）</span>
+          <el-select
+            v-model="form.cellRow"
+            clearable
+            placeholder="未归位"
+            class="full-control"
+          >
+            <el-option
+              v-for="row in selectedLocation.gridRows"
+              :key="row"
+              :label="`第 ${row} 行`"
+              :value="row"
+            />
+          </el-select>
+        </label>
+
+        <label v-if="selectedLocation?.isGrid" class="field">
+          <span>格位列（1–{{ selectedLocation.gridCols }}）</span>
+          <el-select
+            v-model="form.cellCol"
+            clearable
+            placeholder="未归位"
+            class="full-control"
+          >
+            <el-option
+              v-for="col in selectedLocation.gridCols"
+              :key="col"
+              :label="`第 ${col} 列`"
+              :value="col"
+            />
+          </el-select>
+        </label>
+
+        <p v-if="selectedLocation?.isGrid" class="field field--full hint">
+          该位置是分类盒（{{ selectedLocation.gridRows }}×{{ selectedLocation.gridCols }}），一个格位只能放一种元件；留空表示尚未归位。
+        </p>
+
         <div class="field field--full">
           <span>追踪模式</span>
           <el-radio-group v-model="form.trackingMode" :disabled="modeLocked">
@@ -188,6 +226,8 @@ const form = reactive({
   code: '',
   categoryId: null,
   locationId: null,
+  cellRow: null,
+  cellCol: null,
   trackingMode: 'quantity',
   unit: '个',
   quantity: 0,
@@ -224,6 +264,29 @@ watch(
   },
 );
 
+function findLocation(nodes, id) {
+  for (const node of nodes) {
+    if (node.value === id) return node;
+    const found = node.children?.length ? findLocation(node.children, id) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+const selectedLocation = computed(() =>
+  form.locationId == null ? null : findLocation(props.locations, form.locationId),
+);
+
+watch(
+  () => form.locationId,
+  () => {
+    if (!selectedLocation.value?.isGrid) {
+      form.cellRow = null;
+      form.cellCol = null;
+    }
+  },
+);
+
 function fillForm() {
   const item = props.item;
   Object.assign(form, {
@@ -231,6 +294,8 @@ function fillForm() {
     code: item?.code ?? '',
     categoryId: item?.categoryId ?? null,
     locationId: item?.locationId ?? null,
+    cellRow: item?.cellRow ?? null,
+    cellCol: item?.cellCol ?? null,
     trackingMode: item?.trackingMode ?? 'quantity',
     unit: item?.unit ?? '个',
     quantity: item?.quantity ?? 0,
@@ -263,6 +328,14 @@ function buildPayload() {
 
   if (!isEdit.value && form.trackingMode === 'quantity') {
     payload.quantity = form.quantity ?? 0;
+  }
+
+  if (selectedLocation.value?.isGrid) {
+    payload.cellRow = form.cellRow ?? null;
+    payload.cellCol = form.cellCol ?? null;
+  } else if (isEdit.value && props.item?.cellRow != null) {
+    payload.cellRow = null;
+    payload.cellCol = null;
   }
 
   return payload;

@@ -7,6 +7,7 @@ import AppShell from '@/layouts/AppShell.vue';
 const Login = () => import('@/views/Login.vue');
 const Dashboard = () => import('@/views/Dashboard.vue');
 const Items = () => import('@/views/Items.vue');
+const Bins = () => import('@/views/Bins.vue');
 const ItemDetail = () => import('@/views/ItemDetail.vue');
 const Movements = () => import('@/views/Movements.vue');
 const Loans = () => import('@/views/Loans.vue');
@@ -25,6 +26,7 @@ const routes = [
     children: [
       { path: '', name: 'dashboard', component: Dashboard, meta: { title: '仪表盘' } },
       { path: 'items', name: 'items', component: Items, meta: { title: '库存' } },
+      { path: 'bins', name: 'bins', component: Bins, meta: { title: '元件盒' } },
       {
         path: 'items/:id',
         name: 'item-detail',
