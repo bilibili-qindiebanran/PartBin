@@ -9,6 +9,9 @@
         <el-button v-if="auth.canWrite" :icon="Camera" @click="quickInVisible = true">
           快速入库
         </el-button>
+        <el-button v-if="auth.canWrite" :icon="Aim" @click="reconcileVisible = true">
+          快速对料
+        </el-button>
         <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
           新建物料
         </el-button>
@@ -145,6 +148,12 @@
       :locations="dictionary.locationOptions"
       @saved="load"
     />
+
+    <QuickReconcileDialog
+      v-model="reconcileVisible"
+      :locations="dictionary.locationOptions"
+      @saved="load"
+    />
   </div>
 </template>
 
@@ -152,7 +161,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Box, Camera, Plus, Refresh, Search } from '@element-plus/icons-vue';
+import { Aim, Box, Camera, Plus, Refresh, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
@@ -164,6 +173,9 @@ import MovementDialog from '@/components/MovementDialog.vue';
 // 扫码依赖 jsqr，按需加载，不进首屏包
 const QuickStockInDialog = defineAsyncComponent(
   () => import('@/components/QuickStockInDialog.vue'),
+);
+const QuickReconcileDialog = defineAsyncComponent(
+  () => import('@/components/QuickReconcileDialog.vue'),
 );
 import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useAuthStore } from '@/stores/auth';
@@ -189,6 +201,7 @@ const movementItem = ref(null);
 const movementType = ref('in');
 
 const quickInVisible = ref(false);
+const reconcileVisible = ref(false);
 
 const VIEW_KEY = 'partbin:items-view';
 const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
