@@ -35,6 +35,9 @@ importers:
       element-plus:
         specifier: ^2.11.0
         version: 2.14.7(vue@3.5.44)
+      jsqr:
+        specifier: ^1.4.0
+        version: 1.4.0
       pinia:
         specifier: ^3.0.0
         version: 3.0.4(vue@3.5.44)
@@ -774,6 +777,9 @@ packages:
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
+
+  jsqr@1.4.0:
+    resolution: {integrity: sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==}
 
   light-my-request@6.8.0:
     resolution: {integrity: sha512-5Q8PjoSEdtGIB8fikZsTem5vgRo4F2mR6vUKTDW/H1g6MtAt8e3duQbg/QxL5yzg6BZhor2KOUm3hhWMWLTZwg==}
@@ -1823,6 +1829,8 @@ snapshots:
       dequal: 2.0.3
 
   json-schema-traverse@1.0.0: {}
+
+  jsqr@1.4.0: {}
 
   light-my-request@6.8.0:
     dependencies:
