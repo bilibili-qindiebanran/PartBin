@@ -80,14 +80,29 @@ pnpm dev
 
 `pnpm dev` 会同时启动 Vite 与 API；Vite 把 `/api`、`/health` 代理到 8787。
 
-Vite 监听所有网卡（`host: true`），同一局域网内手机可直接访问 `http://<本机IP>:5180`；
+Vite 监听所有网卡（`host: true`），同一局域网内手机可直接访问；
 API 由 Vite 代理回 `127.0.0.1:8787`，**不需要**把 8787 暴露到局域网。
 
 > ⚠️ 浏览器只在安全上下文（HTTPS 或 `localhost`）允许调用摄像头。用 `http://192.168.x.x:5180`
 > 打开时，「快速入库」的扫码会自动退到「手动输入料号」，这是预期行为。
-> 想在真机上测扫码：桌面 Chrome 可加
-> `--unsafely-treat-insecure-origin-as-secure=http://<本机IP>:5180`（需配独立 `--user-data-dir`），
-> 或改用 HTTPS（自签证书 / Cloudflare Tunnel）。
+
+### 手机真机测试扫码（自签证书）
+
+```bash
+pnpm cert:dev   # 生成根证书 + 服务器证书，SAN 自动包含本机所有局域网 IP
+pnpm dev        # 检测到证书后自动启用 HTTPS
+```
+
+- 证书目录 `web/.cert/`（已在 `.gitignore` 中忽略，不要提交）
+- 把 `web/.cert/ca.pem` 传到手机并安装为受信任的根证书：
+  - **iOS**：设置 → 通用 → VPN 与设备管理 → 安装描述文件；再到 通用 → 关于本机 →
+    证书信任设置 → 打开「完全信任」
+  - **Android**：设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书
+- 手机与电脑连同一局域网，访问 `https://<本机IP>:5180`
+- 换网络或 IP 变化后重新生成：`pnpm cert:dev -- --force`
+
+桌面浏览器只临时用一次的话，不必导入 CA，访问后点「高级 → 继续前往」即可；
+`pnpm cert:dev` 生成的证书有效期为 825 天（iOS 13+ 的上限）。
 
 ---
 
