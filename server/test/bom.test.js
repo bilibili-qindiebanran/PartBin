@@ -5,6 +5,7 @@ import {
   createFixture,
   destroyFixture,
   createAdminAccount,
+  createUserAccount,
   request,
 } from './helpers.js';
 
@@ -292,6 +293,183 @@ describe('BOM 匹配', () => {
     const body = res.json();
     expect(body.summary.partial).toBe(0);
     expect(body.groups.every((row) => row.status === 'matched')).toBe(true);
+  });
+
+  it('值+封装族匹配：40kΩ / 100Ω 与库内 0603 40K / 0603 100R 视为同一物料', async () => {
+    await call('POST', '/api/items', { name: '0603 40K', unit: '个', quantity: 50, package: '0603' });
+    await call('POST', '/api/items', { name: '0603 100R', unit: '个', quantity: 50, package: '0603' });
+
+    const csv = ['位号,名称,数量,封装', 'R1,40kΩ,1,R0603', 'R2,100Ω,1,R0603'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+    expect(res.statusCode).toBe(200);
+
+    const body = res.json();
+    expect(body.summary).toMatchObject({ matched: 2, missing: 0 });
+    expect(body.groups.map((row) => row.matchedBy)).toEqual(['value', 'value']);
+    expect(body.groups[0].itemName).toBe('0603 40K');
+  });
+
+  it('封装比较改成严格后，同一行回退为部分匹配', async () => {
+    await call('POST', '/api/items', { name: '0603 40K', unit: '个', quantity: 50, package: '0603' });
+
+    const csv = ['位号,名称,数量,封装', 'R1,40kΩ,1,R0603'].join('\n');
+    const res = await call('POST', '/api/bom/preview', {
+      csvText: csv,
+      options: { packageTolerance: 'strict' },
+    });
+
+    const body = res.json();
+    expect(body.summary.partial).toBe(1);
+    expect(body.groups[0].status).toBe('partial');
+    expect(body.summary.options.packageTolerance).toBe('strict');
+  });
+
+  it('识别 Manufacturer Part 列作为型号匹配', async () => {
+    await call('POST', '/api/items', {
+      name: '贴片电阻',
+      unit: '个',
+      quantity: 40,
+      model: 'CSA0603C0G150J500JT',
+    });
+
+    const csv = ['位号,Comment,Quantity,Footprint,Manufacturer Part', 'C3,15pF,1,C0603,CSA0603C0G150J500JT'].join(
+      '\n',
+    );
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0].matchedBy).toBe('model');
+  });
+
+  it('库内多条同值同封装时返回候选而不是直接缺失', async () => {
+    await call('POST', '/api/items', { name: '0603 15pF 50V', unit: '个', quantity: 50, package: '0603' });
+    await call('POST', '/api/items', { name: '0603 15pF 100V', unit: '个', quantity: 20, package: '0603' });
+
+    const csv = ['位号,名称,数量,封装', 'C1,15pF,1,C0603'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.ambiguous).toBe(1);
+    const row = body.groups[0];
+    expect(row.status).toBe('ambiguous');
+    expect(row.candidates).toHaveLength(2);
+    expect(row.candidates.map((item) => item.name).sort()).toEqual([
+      '0603 15pF 100V',
+      '0603 15pF 50V',
+    ]);
+    expect(row.candidates[0]).toHaveProperty('available');
+  });
+
+  it('覆盖重算：前端回传分组 + 人工指定后变成已匹配', async () => {
+    const created = await call('POST', '/api/items', {
+      name: '0603 15pF 50V',
+      unit: '个',
+      quantity: 50,
+      package: '0603',
+    });
+    const itemId = created.json().item.id;
+
+    const csv = ['位号,名称,数量,封装', 'C1,22pF,1,C0603'].join('\n');
+    const preview = await call('POST', '/api/bom/preview', { csvText: csv });
+    const row = preview.json().groups[0];
+    expect(row.status).toBe('missing');
+
+    const applied = await call('POST', '/api/bom/apply', {
+      sets: 2,
+      groups: preview.json().groups,
+      overrides: [{ key: row.matchKey, itemId }],
+    });
+    expect(applied.statusCode).toBe(200);
+
+    const body = applied.json();
+    const updated = body.groups[0];
+    expect(updated).toMatchObject({
+      status: 'matched',
+      matchedBy: 'manual',
+      itemId,
+      demand: 2,
+      stock: 50,
+      shortage: 0,
+      setsPossible: 50,
+    });
+    expect(body.summary.matched).toBe(1);
+  });
+
+  it('记住人工对应关系后，下次上传同一份 BOM 自动命中', async () => {
+    const created = await call('POST', '/api/items', {
+      name: '0603 15pF 50V',
+      unit: '个',
+      quantity: 50,
+      package: '0603',
+    });
+    const itemId = created.json().item.id;
+
+    const csv = ['位号,名称,数量,封装', 'C1,22pF,1,C0603'].join('\n');
+    const first = await call('POST', '/api/bom/preview', { csvText: csv });
+    const matchKey = first.json().groups[0].matchKey;
+
+    const saved = await call('POST', '/api/bom/resolve', { matchKey, itemId, action: 'bind' });
+    expect(saved.statusCode).toBe(201);
+    expect(saved.json().alias).toMatchObject({ matchKey, itemId, skipParams: false });
+
+    const second = await call('POST', '/api/bom/preview', { csvText: csv });
+    const row = second.json().groups[0];
+    expect(row).toMatchObject({ status: 'matched', matchedBy: 'alias', itemId });
+
+    const aliases = await call('GET', '/api/bom/aliases');
+    expect(aliases.json().data).toHaveLength(1);
+
+    const removed = await call('POST', '/api/bom/resolve', { matchKey, action: 'unbind' });
+    expect(removed.json().removed).toBe(true);
+
+    const third = await call('POST', '/api/bom/preview', { csvText: csv });
+    expect(third.json().groups[0].status).toBe('missing');
+  });
+
+  it('接受差异：封装不同的行也能升级为完全匹配', async () => {
+    const seeded = await seed();
+    const csv = ['位号,名称,数量,封装', 'C1,100nF 电容,1,0805'].join('\n');
+
+    const before = await call('POST', '/api/bom/preview', { csvText: csv });
+    expect(before.json().groups[0].status).toBe('partial');
+
+    const accepted = await call('POST', '/api/bom/resolve', {
+      matchKey: before.json().groups[0].matchKey,
+      itemId: seeded.capacitor.id,
+      action: 'accept',
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json().alias.skipParams).toBe(true);
+
+    const after = await call('POST', '/api/bom/preview', { csvText: csv });
+    expect(after.json().groups[0]).toMatchObject({
+      status: 'matched',
+      matchedBy: 'alias',
+      skipParams: true,
+    });
+    expect(after.json().groups[0].mismatches).toEqual([]);
+  });
+
+  it('只读账号不能写入人工对应关系，但可以查看', async () => {
+    const reader = await createUserAccount(ctx, 'reader');
+    const created = await call('POST', '/api/items', { name: '0603 15pF 50V', unit: '个', quantity: 5 });
+    const itemId = created.json().item.id;
+
+    const forbidden = await request(ctx.app, {
+      method: 'POST',
+      url: '/api/bom/resolve',
+      cookie: reader.cookie,
+      payload: { matchKey: 'val:0603|c:2.2e-11', itemId, action: 'bind' },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const list = await request(ctx.app, {
+      method: 'GET',
+      url: '/api/bom/aliases',
+      cookie: reader.cookie,
+    });
+    expect(list.statusCode).toBe(200);
   });
 
   it('缺少关键列时报 400', async () => {
