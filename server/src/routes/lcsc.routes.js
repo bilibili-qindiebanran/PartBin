@@ -2,6 +2,7 @@ import { ERROR } from '../lib/errors.js';
 import { requireId } from '../lib/validate.js';
 import { lookupLcsc } from '../services/lcsc.js';
 import { matchItemLcsc } from '../services/items.js';
+import { commitQuickIn, previewQuickIn } from '../services/quick-in.js';
 
 /**
  * 立创料号匹配：查询上游并把结果补进物料。
@@ -41,5 +42,16 @@ export default async function lcscRoutes(app) {
       code: request.body?.code,
       userId: request.user.id,
     });
+  });
+
+  /** 快速入库预览：扫码后查立创信息 + 判断库存里是否已有同料号物料 */
+  app.post('/api/lcsc/quick-in/preview', { preHandler: app.requireAdmin }, async (request) =>
+    previewQuickIn(db, request.body?.code, options(request)),
+  );
+
+  /** 快速入库提交：mode=add 累加到已有物料，mode=create 新建物料 */
+  app.post('/api/lcsc/quick-in', { preHandler: app.requireAdmin }, async (request, reply) => {
+    const result = commitQuickIn(db, request.body ?? {}, request.user.id);
+    return reply.code(result.created ? 201 : 200).send(result);
   });
 }
