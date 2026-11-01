@@ -4,15 +4,6 @@
       <video ref="videoRef" class="scanner__video" playsinline muted autoplay />
       <canvas ref="canvasRef" class="scanner__canvas" />
       <div class="scanner__reticle" aria-hidden="true" />
-      <div v-if="zoomRange" class="scanner__zoom">
-        <button type="button" :disabled="zoomValue <= zoomRange.min" @click="stepZoom(-1)">
-          −
-        </button>
-        <span>{{ zoomValue.toFixed(1) }}×</span>
-        <button type="button" :disabled="zoomValue >= zoomRange.max" @click="stepZoom(1)">
-          +
-        </button>
-      </div>
       <p v-if="status === 'starting'" class="scanner__hint">正在启动摄像头…</p>
       <p v-else-if="status === 'error'" class="scanner__hint scanner__hint--error">
         {{ errorText }}
@@ -32,8 +23,6 @@ const videoRef = ref(null);
 const canvasRef = ref(null);
 const status = ref('starting');
 const errorText = ref('');
-const zoomRange = ref(null);
-const zoomValue = ref(1);
 
 /** 取景框在容器里的内缩比例，必须与 .scanner__reticle 的 inset 保持一致 */
 const RETICLE_INSET = 0.12;
@@ -41,7 +30,6 @@ const RETICLE_INSET = 0.12;
 const MAX_DECODE_WIDTH = 960;
 
 let stream = null;
-let track = null;
 let timer = null;
 let finished = false;
 let frameTick = 0;
@@ -74,7 +62,6 @@ function stop() {
   }
   for (const item of stream?.getTracks() ?? []) item.stop();
   stream = null;
-  track = null;
   if (videoRef.value) videoRef.value.srcObject = null;
 }
 
@@ -148,44 +135,13 @@ function scanFrame() {
   }
 }
 
-/** 读取设备的变焦与对焦能力；不支持就静默跳过 */
+/** 读取设备的对焦能力；不支持就静默跳过 */
 async function prepareTrack(videoTrack) {
-  try {
-    const caps = videoTrack.getCapabilities?.() ?? {};
-    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
-      zoomRange.value = {
-        min: caps.zoom.min ?? 1,
-        max: caps.zoom.max,
-        step: caps.zoom.step || 0.5,
-      };
-      zoomValue.value = caps.zoom.min ?? 1;
-    }
-  } catch {
-    zoomRange.value = null;
-  }
-
   // 连续自动对焦：手机上近距离扫码成败的关键
   try {
     await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
   } catch {
     // 绝大多数桌面摄像头没有 focusMode，忽略
-  }
-}
-
-async function stepZoom(direction) {
-  if (!track || !zoomRange.value) return;
-  const { min, max, step } = zoomRange.value;
-  const next = clamp(
-    Number((zoomValue.value + direction * (step || 0.5)).toFixed(2)),
-    min,
-    max,
-  );
-  if (next === zoomValue.value) return;
-  zoomValue.value = next;
-  try {
-    await track.applyConstraints({ advanced: [{ zoom: next }] });
-  } catch {
-    // 设备拒绝就保持原值，不影响扫码
   }
 }
 
@@ -212,7 +168,7 @@ async function start() {
       stop();
       return;
     }
-    track = stream.getVideoTracks()[0] ?? null;
+    const track = stream.getVideoTracks()[0];
     if (track) prepareTrack(track);
 
     const video = videoRef.value;
@@ -255,38 +211,6 @@ onBeforeUnmount(stop);
 
 .scanner__canvas {
   display: none;
-}
-
-.scanner__zoom {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.scanner__zoom button {
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.scanner__zoom button:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 .scanner__reticle {
