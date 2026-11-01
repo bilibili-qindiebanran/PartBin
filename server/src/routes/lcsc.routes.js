@@ -3,6 +3,7 @@ import { requireId } from '../lib/validate.js';
 import { lookupLcsc } from '../services/lcsc.js';
 import { matchItemLcsc } from '../services/items.js';
 import { commitQuickIn, previewQuickIn } from '../services/quick-in.js';
+import { linkItemLcsc, previewReconcile } from '../services/reconcile.js';
 
 /**
  * 立创料号匹配：查询上游并把结果补进物料。
@@ -54,4 +55,19 @@ export default async function lcscRoutes(app) {
     const result = commitQuickIn(db, request.body ?? {}, request.user.id);
     return reply.code(result.created ? 201 : 200).send(result);
   });
+
+  /** 快速对料预览：扫码后查库内对应物料，没有就给可能的候选 */
+  app.post('/api/lcsc/reconcile/preview', { preHandler: app.requireAdmin }, async (request) => {
+    guard(request);
+    return previewReconcile(db, request.body?.code, options(request));
+  });
+
+  /** 手动匹配：把料号绑定到已有物料（已有别的料号则拒绝） */
+  app.post('/api/lcsc/reconcile/link', { preHandler: app.requireAdmin }, async (request) =>
+    linkItemLcsc(
+      db,
+      { code: request.body?.code, itemId: request.body?.itemId },
+      request.user.id,
+    ),
+  );
 }

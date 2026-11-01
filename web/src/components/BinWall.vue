@@ -272,6 +272,9 @@ function onDragEnd() {
 
 onMounted(load);
 
+// 新建/编辑物料后由父组件调用，保证盒视图与表格数据一致
+defineExpose({ reload: load });
+
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer);
 });
