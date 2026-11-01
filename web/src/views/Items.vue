@@ -425,28 +425,12 @@ onBeforeUnmount(() => {
     gap: 8px;
   }
 
+  /* 切换器保持原尺寸，只挪到第一行左侧，不拉伸 */
   :deep(.page-header__actions > .el-radio-group) {
     grid-row: 1;
     grid-column: 1;
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: stretch;
-    height: 32px;
-    width: 100%;
-  }
-
-  /* 两个切换按钮均分所在列，高度对齐「新建物料」 */
-  :deep(.page-header__actions > .el-radio-group .el-radio-button) {
-    display: flex;
-    flex: 1;
-  }
-
-  :deep(.page-header__actions > .el-radio-group .el-radio-button__inner) {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
+    align-self: center;
+    justify-self: start;
   }
 
   :deep(.page-header__actions > .btn-create) {
