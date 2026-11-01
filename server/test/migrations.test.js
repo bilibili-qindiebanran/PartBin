@@ -7,7 +7,7 @@ import { migrate } from '../src/db/migrate.js';
 import { createFixture, destroyFixture } from './helpers.js';
 
 /** 当前迁移文件数（001–006）；新增迁移时同步 +1 */
-const MIGRATION_COUNT = 6;
+const MIGRATION_COUNT = 7;
 
 describe('数据库迁移', () => {
   it('首次启动建表并记录版本', async () => {

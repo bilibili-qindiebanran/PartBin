@@ -77,6 +77,8 @@ export async function buildApp(overrides = {}) {
     registerIp: createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 }),
     // 立创料号查询：同 IP 30 次/5 分钟，避免被当作外网抓取代理
     lcsc: createRateLimiter({ limit: 30, windowMs: 5 * 60 * 1000 }),
+    // BOM 人工对应关系：同管理员 60 次/5 分钟，防脚本批量灌入
+    bomAlias: createRateLimiter({ limit: 60, windowMs: 5 * 60 * 1000 }),
   });
 
   // 统一安全响应头（CSP、HSTS、COOP/CORP 等）

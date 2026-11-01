@@ -2,6 +2,10 @@
   <div class="page">
     <PageHeader title="BOM 匹配" subtitle="上传立创 EDA / 嘉立创导出的 BOM，检查库存、缺口与取料位置。">
       <template #actions>
+        <el-button :icon="Link" @click="router.push('/bom/aliases')">
+          对应关系
+          <template v-if="aliasCount > 0">（{{ aliasCount }}）</template>
+        </el-button>
         <el-button v-if="report" :icon="Download" @click="exportCsv">导出报表</el-button>
       </template>
     </PageHeader>
@@ -50,6 +54,16 @@
         >
           开始匹配
         </el-button>
+
+        <el-select v-model="options.packageTolerance" size="small" class="full-control">
+          <el-option label="封装：按封装族比较" value="family" />
+          <el-option label="封装：严格全串比较" value="strict" />
+          <el-option label="封装：忽略差异" value="ignore" />
+        </el-select>
+        <el-checkbox v-model="options.valueMatch" label="按「值 + 封装」匹配阻容" />
+        <el-checkbox v-model="options.includeArchived" label="包含已归档物料" />
+        <el-checkbox v-model="options.acceptParamMismatch" label="封装差异直接算匹配" />
+        <p class="hint">改动选项后需重新点「开始匹配」。</p>
       </div>
     </section>
 
@@ -88,6 +102,15 @@
           <h3>明细</h3>
           <el-checkbox v-model="onlyProblems">只看缺失 / 缺料</el-checkbox>
         </div>
+
+        <el-alert
+          v-if="aliasCount > 0"
+          class="panel__alert"
+          type="success"
+          :closable="false"
+          show-icon
+          :title="`已记住 ${aliasCount} 条人工对应关系，相同 BOM 会自动命中`"
+        />
 
         <el-table :data="visibleGroups" class="bom-table" row-key="key" :row-class-name="rowClass">
           <el-table-column label="元件" min-width="200">
@@ -145,6 +168,29 @@
               <el-tag v-else size="small" type="danger">缺失</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="匹配方式" width="96">
+            <template #default="{ row }">
+              <span class="muted">{{ matchLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="168" align="right">
+            <template #default="{ row }">
+              <el-button v-if="row.status === 'partial'" link size="small" @click="acceptRow(row)">
+                接受
+              </el-button>
+              <el-button link size="small" @click="openPicker(row)">
+                {{ row.itemId ? '改选' : '指定' }}
+              </el-button>
+              <el-button
+                v-if="row.aliasId || overrideOf(row)"
+                link
+                size="small"
+                @click="clearRow(row)"
+              >
+                撤销
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </section>
 
@@ -166,6 +212,44 @@
           </article>
         </div>
       </section>
+
+    <el-dialog v-model="picker.open" title="指定物料" width="760px" append-to-body>
+      <div class="picker__search">
+        <el-input
+          v-model="picker.q"
+          placeholder="搜索名称 / 型号 / 立创料号"
+          clearable
+          @input="searchItems"
+        />
+        <el-checkbox v-model="picker.withArchived" @change="searchItems">含归档</el-checkbox>
+      </div>
+      <p class="hint">
+        目标行：{{ picker.row?.name || '—' }}
+        <template v-if="picker.row?.package"> · {{ picker.row.package }}</template>
+        <template v-if="picker.row?.candidates?.length">
+          · 库内 {{ picker.row.candidates.length }} 个候选
+        </template>
+      </p>
+      <el-table
+        :data="picker.items"
+        height="320"
+        highlight-current-row
+        @current-change="onPickItem"
+      >
+        <el-table-column prop="name" label="名称" min-width="220" />
+        <el-table-column prop="package" label="封装" width="110" />
+        <el-table-column prop="quantity" label="库存" width="80" align="right" />
+        <el-table-column prop="locationPath" label="位置" min-width="140" />
+        <el-table-column prop="lcscCode" label="立创" width="104" />
+      </el-table>
+      <template #footer>
+        <el-checkbox v-model="picker.remember" class="picker__remember">记住这个对应关系</el-checkbox>
+        <el-button @click="picker.open = false">取消</el-button>
+        <el-button type="primary" :disabled="!picker.selected" :loading="applying" @click="confirmPick">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
     </template>
 
     <EmptyState
@@ -179,19 +263,61 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Download, Files, Grid, UploadFilled } from '@element-plus/icons-vue';
+import { Download, Files, Grid, Link, UploadFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
-import { apiUpload } from '@/api/client';
+import { api, apiUpload } from '@/api/client';
 
 const uploadRef = ref(null);
+const router = useRouter();
 const file = ref(null);
 const sets = ref(1);
 const loading = ref(false);
+const applying = ref(false);
 const report = ref(null);
 const onlyProblems = ref(false);
+const aliasCount = ref(0);
+
+const options = reactive({
+  valueMatch: true,
+  packageTolerance: 'family',
+  includeArchived: false,
+  acceptParamMismatch: false,
+});
+
+/** 本次会话的人工覆盖：matchKey → { itemId, skipParams } */
+const overrides = reactive({});
+
+const picker = reactive({
+  open: false,
+  q: '',
+  withArchived: false,
+  remember: true,
+  items: [],
+  selected: null,
+  row: null,
+});
+
+function overrideOf(row) {
+  return overrides[row.matchKey] ?? null;
+}
+
+function matchLabel(row) {
+  return (
+    {
+      lcsc: '立创料号',
+      model: '型号',
+      code: '内部编码',
+      name: '名称',
+      value: '值+封装',
+      alias: '人工记住',
+      manual: '人工指定',
+    }[row.matchedBy] ?? '—'
+  );
+}
 
 function rowClass({ row }) {
   return row.status === 'partial' ? 'row-partial' : '';
@@ -225,15 +351,21 @@ async function runMatch() {
   }
   loading.value = true;
   try {
+    for (const key of Object.keys(overrides)) delete overrides[key];
+
     const formData = new FormData();
     formData.append('file', file.value, file.value.name);
     formData.append('sets', String(sets.value));
+    formData.append('options', JSON.stringify({ ...options }));
     report.value = await apiUpload('/api/bom/preview', formData);
-    ElMessage.success(
-      report.value.summary.missing > 0
-        ? `匹配完成，有 ${report.value.summary.missing} 种元件本地没有`
-        : '匹配完成',
-    );
+    await loadAliases();
+
+    const { missing, ambiguous, manual } = report.value.summary;
+    const parts = [];
+    if (manual) parts.push(`${manual} 项来自人工对应`);
+    if (ambiguous) parts.push(`${ambiguous} 项需人工选定`);
+    if (missing) parts.push(`${missing} 项本地没有`);
+    ElMessage.success(parts.length > 0 ? `匹配完成：${parts.join('，')}` : '匹配完成');
   } catch (error) {
     ElMessage.error(error.message || '匹配失败');
   } finally {
@@ -241,9 +373,113 @@ async function runMatch() {
   }
 }
 
+async function loadAliases() {
+  try {
+    const data = await api('/api/bom/aliases');
+    aliasCount.value = data.data.length;
+  } catch {
+    aliasCount.value = 0;
+  }
+}
+
+onMounted(loadAliases);
+
+/** 把人工覆盖回传服务端重算，库存/缺口/可支持套数都会跟着变 */
+async function applyOverrides() {
+  if (!report.value) return;
+  applying.value = true;
+  try {
+    report.value = await api('/api/bom/apply', {
+      method: 'POST',
+      body: {
+        sets: sets.value,
+        options: { ...options },
+        groups: report.value.groups,
+        overrides: Object.entries(overrides).map(([key, value]) => ({ key, ...value })),
+      },
+    });
+  } catch (error) {
+    ElMessage.error(error.message || '重算失败');
+  } finally {
+    applying.value = false;
+  }
+}
+
+async function remember(row, itemId, action) {
+  try {
+    await api('/api/bom/resolve', {
+      method: 'POST',
+      body: { matchKey: row.matchKey, itemId, action },
+    });
+    await loadAliases();
+    ElMessage.success('已记住这个对应关系');
+  } catch (error) {
+    ElMessage.warning(`未能记住：${error.message}`);
+  }
+}
+
+async function openPicker(row) {
+  picker.row = row;
+  picker.selected = null;
+  picker.q = row.name ?? '';
+  picker.withArchived = options.includeArchived;
+  picker.remember = true;
+  picker.open = true;
+  await searchItems();
+}
+
+async function searchItems() {
+  const query = new URLSearchParams({ pageSize: '20', q: picker.q ?? '' });
+  if (picker.withArchived) query.set('archived', '1');
+  try {
+    const data = await api(`/api/items?${query.toString()}`);
+    picker.items = data.data;
+    picker.selected = data.data.length === 1 ? data.data[0] : null;
+  } catch (error) {
+    picker.items = [];
+    ElMessage.error(error.message || '搜索失败');
+  }
+}
+
+function onPickItem(item) {
+  if (item) picker.selected = item;
+}
+
+async function confirmPick() {
+  const { row, selected, remember: shouldRemember } = picker;
+  if (!row || !selected) return;
+
+  overrides[row.matchKey] = { itemId: selected.id, skipParams: false };
+  picker.open = false;
+  await applyOverrides();
+  if (shouldRemember) await remember(row, selected.id, 'bind');
+}
+
+/** 部分匹配 → 完全匹配（封装/耐压差异视为可接受） */
+async function acceptRow(row) {
+  if (!row.itemId) return;
+  overrides[row.matchKey] = { itemId: row.itemId, skipParams: true };
+  await applyOverrides();
+  await remember(row, row.itemId, 'accept');
+}
+
+async function clearRow(row) {
+  delete overrides[row.matchKey];
+  await applyOverrides();
+
+  if (row.aliasId) {
+    try {
+      await api(`/api/bom/aliases/${row.aliasId}`, { method: 'DELETE' });
+      await loadAliases();
+    } catch (error) {
+      ElMessage.warning(`撤销失败：${error.message}`);
+    }
+  }
+}
+
 function exportCsv() {
   if (!report.value) return;
-  const header = ['元件', '立创料号', '型号', '封装', '耐压', '单板用量', '需求', '库存', '缺口', '最多套数', '位置', '格位', '状态', '参数差异', '位号'];
+  const header = ['元件', '立创料号', '型号', '封装', '耐压', '单板用量', '需求', '库存', '缺口', '最多套数', '位置', '格位', '状态', '匹配方式', '参数差异', '位号'];
   const lines = [header.join(',')];
   for (const row of report.value.groups) {
     const cells = [
@@ -260,6 +496,7 @@ function exportCsv() {
       row.location ?? '',
       row.cell ? row.cell.replace('格位 ', '') : '',
       row.status,
+      matchLabel(row),
       (row.mismatches ?? []).join('；'),
       row.designators.join(' '),
     ].map((value) => {
@@ -460,6 +697,22 @@ function exportCsv() {
 
 .muted {
   color: var(--ink-400);
+}
+
+.panel__alert {
+  margin-bottom: var(--space-3);
+}
+
+.picker__search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.picker__remember {
+  float: left;
+  line-height: 32px;
 }
 
 .pickup {
