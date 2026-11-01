@@ -4,12 +4,21 @@
       <video ref="videoRef" class="scanner__video" playsinline muted autoplay />
       <canvas ref="canvasRef" class="scanner__canvas" />
       <div class="scanner__reticle" aria-hidden="true" />
+      <div v-if="zoomRange" class="scanner__zoom">
+        <button type="button" :disabled="zoomValue <= zoomRange.min" @click="stepZoom(-1)">
+          −
+        </button>
+        <span>{{ zoomValue.toFixed(1) }}×</span>
+        <button type="button" :disabled="zoomValue >= zoomRange.max" @click="stepZoom(1)">
+          +
+        </button>
+      </div>
       <p v-if="status === 'starting'" class="scanner__hint">正在启动摄像头…</p>
       <p v-else-if="status === 'error'" class="scanner__hint scanner__hint--error">
         {{ errorText }}
       </p>
     </div>
-    <p class="scanner__tip">把立创标签上的二维码放进方框，识别成功后自动进入预览</p>
+    <p class="scanner__tip">二维码放进方框即可，方框内就是识别区域</p>
   </div>
 </template>
 
@@ -23,10 +32,23 @@ const videoRef = ref(null);
 const canvasRef = ref(null);
 const status = ref('starting');
 const errorText = ref('');
+const zoomRange = ref(null);
+const zoomValue = ref(1);
+
+/** 取景框在容器里的内缩比例，必须与 .scanner__reticle 的 inset 保持一致 */
+const RETICLE_INSET = 0.12;
+/** 解码画面上限：分辨率再高也不会让 jsQR 更准，只会更慢 */
+const MAX_DECODE_WIDTH = 960;
 
 let stream = null;
+let track = null;
 let timer = null;
 let finished = false;
+let frameTick = 0;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 /** getUserMedia 的常见失败原因 → 中文提示 */
 function describeError(error) {
@@ -50,9 +72,42 @@ function stop() {
     clearTimeout(timer);
     timer = null;
   }
-  for (const track of stream?.getTracks() ?? []) track.stop();
+  for (const item of stream?.getTracks() ?? []) item.stop();
   stream = null;
+  track = null;
   if (videoRef.value) videoRef.value.srcObject = null;
+}
+
+/**
+ * 把视频里「容器坐标系中的一个矩形」映射回原始像素并画到 canvas。
+ * video 用 object-fit: cover 展示，会等比放大并裁掉溢出部分，
+ * 所以这里必须按 cover 的缩放关系反算，才能做到「框内所见即所解」。
+ */
+function drawRegion(video, canvas, box) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const cw = video.clientWidth || 1;
+  const ch = video.clientHeight || 1;
+
+  const scale = Math.max(cw / vw, ch / vh);
+  const offsetX = (vw * scale - cw) / 2;
+  const offsetY = (vh * scale - ch) / 2;
+
+  const sx = clamp((box.x + offsetX) / scale, 0, vw - 1);
+  const sy = clamp((box.y + offsetY) / scale, 0, vh - 1);
+  const sw = clamp(box.w / scale, 1, vw - sx);
+  const sh = clamp(box.h / scale, 1, vh - sy);
+
+  const outW = Math.max(1, Math.round(Math.min(sw, MAX_DECODE_WIDTH)));
+  const outH = Math.max(1, Math.round((sh * outW) / sw));
+
+  if (canvas.width !== outW || canvas.height !== outH) {
+    canvas.width = outW;
+    canvas.height = outH;
+  }
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH);
+  return context.getImageData(0, 0, outW, outH);
 }
 
 function scanFrame() {
@@ -63,23 +118,74 @@ function scanFrame() {
   const canvas = canvasRef.value;
   if (!video || !canvas || video.readyState < 2 || !video.videoWidth) return;
 
-  // 缩到 640px 以内再解码，移动端帧率更稳
-  const width = Math.min(640, video.videoWidth);
-  const height = Math.round((video.videoHeight * width) / video.videoWidth);
-  canvas.width = width;
-  canvas.height = height;
+  const cw = video.clientWidth || 1;
+  const ch = video.clientHeight || 1;
+  const inner = {
+    x: cw * RETICLE_INSET,
+    y: ch * RETICLE_INSET,
+    w: cw * (1 - RETICLE_INSET * 2),
+    h: ch * (1 - RETICLE_INSET * 2),
+  };
 
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  context.drawImage(video, 0, 0, width, height);
-  const image = context.getImageData(0, 0, width, height);
-  const result = jsQR(image.data, width, height, {
-    inversionAttempts: 'dontInvert',
+  // 主路径：只解码取景框内的原始像素，等效放大，近距离也能出结果
+  const image = drawRegion(video, canvas, inner);
+  let result = jsQR(image.data, image.width, image.height, {
+    inversionAttempts: 'attemptBoth',
   });
+
+  // 兜底：二维码略偏出框时，每 4 帧扫一次全画面（降采样，便宜）
+  if (!result && ++frameTick % 4 === 0) {
+    const full = drawRegion(video, canvas, { x: 0, y: 0, w: cw, h: ch });
+    result = jsQR(full.data, full.width, full.height, {
+      inversionAttempts: 'dontInvert',
+    });
+  }
 
   if (result?.data) {
     stop();
     status.value = 'found';
     emit('detected', result.data);
+  }
+}
+
+/** 读取设备的变焦与对焦能力；不支持就静默跳过 */
+async function prepareTrack(videoTrack) {
+  try {
+    const caps = videoTrack.getCapabilities?.() ?? {};
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+      zoomRange.value = {
+        min: caps.zoom.min ?? 1,
+        max: caps.zoom.max,
+        step: caps.zoom.step || 0.5,
+      };
+      zoomValue.value = caps.zoom.min ?? 1;
+    }
+  } catch {
+    zoomRange.value = null;
+  }
+
+  // 连续自动对焦：手机上近距离扫码成败的关键
+  try {
+    await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+  } catch {
+    // 绝大多数桌面摄像头没有 focusMode，忽略
+  }
+}
+
+async function stepZoom(direction) {
+  if (!track || !zoomRange.value) return;
+  const { min, max, step } = zoomRange.value;
+  const next = clamp(
+    Number((zoomValue.value + direction * (step || 0.5)).toFixed(2)),
+    min,
+    max,
+  );
+  if (next === zoomValue.value) return;
+  zoomValue.value = next;
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: next }] });
+  } catch {
+    // 设备拒绝就保持原值，不影响扫码
   }
 }
 
@@ -96,14 +202,19 @@ async function start() {
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },
+        // 与 4:3 的取景框保持一致，避免 object-fit: cover 裁切导致显示与解码错位
+        aspectRatio: { ideal: 4 / 3 },
         width: { ideal: 1280 },
-        height: { ideal: 720 },
+        height: { ideal: 960 },
       },
     });
     if (finished) {
       stop();
       return;
     }
+    track = stream.getVideoTracks()[0] ?? null;
+    if (track) prepareTrack(track);
+
     const video = videoRef.value;
     if (!video) return;
     video.srcObject = stream;
@@ -144,6 +255,38 @@ onBeforeUnmount(stop);
 
 .scanner__canvas {
   display: none;
+}
+
+.scanner__zoom {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scanner__zoom button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scanner__zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .scanner__reticle {
