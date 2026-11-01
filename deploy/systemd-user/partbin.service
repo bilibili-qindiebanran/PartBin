@@ -1,0 +1,27 @@
+# PartBin —— 用户态 systemd 单元（无需 root）
+#
+# 安装位置：~/.config/systemd/user/partbin.service
+# 前提：`sudo loginctl enable-linger <用户>`，否则退出登录后服务会被回收、也不会开机自启。
+# 代码目录是符号链接 ~/partbin/app，指向 ~/partbin/releases/<时间戳>；
+# 数据目录 ~/partbin/data 与配置 ~/partbin/env 均在版本目录之外，更新代码不会影响数据。
+
+[Unit]
+Description=PartBin hardware inventory
+Documentation=https://github.com/bilibili-qindiebanran/PartBin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/partbin/app
+EnvironmentFile=%h/partbin/env
+ExecStart=%h/partbin/node/bin/node --disable-warning=ExperimentalWarning server/src/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

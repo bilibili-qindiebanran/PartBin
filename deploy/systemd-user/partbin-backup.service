@@ -1,0 +1,14 @@
+# PartBin 每日加密备份 —— 用户态单元
+# 安装位置：~/.config/systemd/user/partbin-backup.service
+
+[Unit]
+Description=PartBin encrypted database backup
+After=partbin.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/partbin/app
+EnvironmentFile=%h/partbin/env
+ExecStart=%h/partbin/node/bin/node --disable-warning=ExperimentalWarning server/scripts/backup.js
+UMask=0077
+NoNewPrivileges=true
