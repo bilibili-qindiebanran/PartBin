@@ -94,7 +94,8 @@ pnpm dev        # 检测到证书后自动启用 HTTPS
 ```
 
 - 证书目录 `web/.cert/`（已在 `.gitignore` 中忽略，不要提交）
-- 把 `web/.cert/ca.pem` 传到手机并安装为受信任的根证书：
+- 把 `web/.cert/ca.crt` 传到手机并安装为受信任的根证书（手机浏览器下载：
+  `cd web/.cert && python3 -m http.server 8000`，然后访问 `http://<本机IP>:8000/ca.crt`）：
   - **iOS**：设置 → 通用 → VPN 与设备管理 → 安装描述文件；再到 通用 → 关于本机 →
     证书信任设置 → 打开「完全信任」
   - **Android**：设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书

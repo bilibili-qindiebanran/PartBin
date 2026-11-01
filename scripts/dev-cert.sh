@@ -18,6 +18,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CERT_DIR="$ROOT_DIR/web/.cert"
 CA_KEY="$CERT_DIR/ca-key.pem"
 CA_CERT="$CERT_DIR/ca.pem"
+CA_CRT="$CERT_DIR/ca.crt"
 SERVER_KEY="$CERT_DIR/dev-key.pem"
 SERVER_CRT="$CERT_DIR/dev-cert.pem"
 SERVER_CSR="$CERT_DIR/dev.csr"
@@ -54,6 +55,7 @@ if ! openssl version | grep -qE 'OpenSSL (1\.1\.[1-9]|[3-9]\.)'; then
 fi
 
 if [[ -f "$SERVER_CRT" && -f "$SERVER_KEY" && $FORCE -eq 0 ]]; then
+  cp -f "$CA_CERT" "$CA_CRT"
   echo "证书已存在：$SERVER_CRT"
   echo "如需重建（例如换了网络），运行：pnpm cert:dev -- --force"
   openssl x509 -in "$SERVER_CRT" -noout -subject -enddate -ext subjectAltName 2>/dev/null |
@@ -117,10 +119,12 @@ openssl x509 -req -in "$SERVER_CSR" -sha256 -days "$SERVER_DAYS" \
 rm -f "$SERVER_CSR" "$SAN_EXT" "$CERT_DIR/ca.srl"
 chmod 600 "$CA_KEY" "$SERVER_KEY"
 chmod 644 "$CA_CERT" "$SERVER_CRT"
+# 手机安装时用 .crt 后缀更省事（iOS / Android 都直接识别）
+cp -f "$CA_CERT" "$CA_CRT"
 
 echo
 echo "✅ 已生成："
-echo "   CA 证书   $CA_CERT   ← 装到手机上"
+echo "   CA 证书   $CA_CRT   ← 装到手机上（.crt 后缀）"
 echo "   服务器证书 $SERVER_CRT"
 echo
 echo "证书覆盖的地址："
@@ -132,10 +136,14 @@ echo
 cat <<'TIP'
 下一步：
   1) 重启开发服务器：pnpm dev（检测到证书会自动启用 HTTPS）
-  2) 把 web/.cert/ca.pem 传到手机并安装为受信任的根证书
-       iOS：设置 → 通用 → VPN与设备管理 → 安装描述文件
+  2) 把 web/.cert/ca.crt 传到手机并安装为受信任的根证书
+       临时共享（手机浏览器直接下载）：
+         cd web/.cert && python3 -m http.server 8000
+         手机访问 http://<本机IP>:8000/ca.crt
+       iOS：点开下载的 .crt → 设置 → 通用 → VPN与设备管理 → 安装描述文件
             再进 通用 → 关于本机 → 证书信任设置 → 打开完全信任
        Android：设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书
   3) 手机连同一局域网，访问上面列出的 https://<IP>:5180
   4) 换网络或 IP 变化后重新生成：pnpm cert:dev -- --force
+  5) 不用了可以删除 web/.cert/，会自动回落到 HTTP
 TIP
