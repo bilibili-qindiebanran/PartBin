@@ -899,3 +899,170 @@ export function rematchGroups(db, groups, input = {}) {
 
   return matchGroups(db, normalized, input);
 }
+
+// ---------------------------------------------------------------------------
+// EDA 插件批量查料（只读）
+// 复用上面的封装族归一与电气值归一，但一次请求只建一次索引。
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LOOKUP_LIMIT = 5;
+
+/** 各通道的可信度，仅用于 hits 排序与插件展示 */
+const MATCH_SCORES = {
+  lcsc: 1,
+  model: 0.9,
+  'value+package': 0.8,
+  value: 0.6,
+};
+
+/** 把 EDA 传来的一条器件归一成与 BOM 分组同样的形状 */
+function partGroupOf(part) {
+  const value = String(part?.value ?? '').slice(0, 200).trim();
+  const pkg = String(part?.package ?? '').slice(0, 200).trim();
+  const mpn = String(part?.mpn ?? '').slice(0, 200).trim();
+  const lcsc = String(part?.lcsc ?? '')
+    .toUpperCase()
+    .match(/C\d{4,10}/)?.[0] ?? '';
+
+  return {
+    name: value,
+    lcscCode: lcsc,
+    model: mpn,
+    package: pkg,
+    valueKeys: valueKeysOf(value, pkg),
+    valueSuffixes: valueSuffixesOf(value, true),
+  };
+}
+
+/** 电气值后缀 → 物料（不含封装族），用于「只知道值」时的兜底匹配 */
+function buildValueSuffixIndex(pool) {
+  const map = new Map();
+  for (const row of pool) {
+    for (const suffix of valueSuffixesOf(`${row.name ?? ''} ${row.model ?? ''}`, true)) {
+      const list = map.get(suffix) ?? [];
+      list.push(row);
+      map.set(suffix, list);
+    }
+  }
+  return map;
+}
+
+/**
+ * 匹配链：料号 → 厂家型号 → 值+封装族 → 值。
+ * 唯一命中直接返回；多个命中返回整组候选交给插件让用户挑。
+ */
+function matchPart(index, suffixIndex, group, options) {
+  let fallback = null;
+
+  const settle = (by, list) => {
+    if (list.length === 1) return { rows: list, match: by };
+    if (!fallback) fallback = { rows: list, match: by };
+    return null;
+  };
+
+  const byKey = (map, key) => {
+    const list = map.get(String(key).trim().toLowerCase());
+    return list && list.length > 0 ? list : null;
+  };
+
+  if (group.lcscCode) {
+    const list = byKey(index.byLcsc, group.lcscCode);
+    const settled = list && settle('lcsc', list);
+    if (settled) return settled;
+  }
+
+  if (options.useManufacturerPart && group.model) {
+    const list = byKey(index.byModel, group.model);
+    const settled = list && settle('model', list);
+    if (settled) return settled;
+  }
+
+  if (options.valueMatch && group.valueKeys.length > 0) {
+    const rows = new Map();
+    for (const key of group.valueKeys) {
+      for (const row of index.byValue.get(key) ?? []) rows.set(Number(row.id), row);
+    }
+    if (rows.size > 0) {
+      const settled = settle('value+package', [...rows.values()]);
+      if (settled) return settled;
+    }
+  }
+
+  if (options.valueMatch) {
+    // 名称精确匹配优先（IC 这类 value 本身就是型号名），再退回电气值归一
+    if (group.name) {
+      const list = byKey(index.byName, group.name);
+      const settled = list && settle('value', list);
+      if (settled) return settled;
+    }
+
+    if (group.valueSuffixes.length > 0) {
+      const rows = new Map();
+      for (const suffix of group.valueSuffixes) {
+        for (const row of suffixIndex.get(suffix) ?? []) rows.set(Number(row.id), row);
+      }
+      if (rows.size > 0) {
+        const settled = settle('value', [...rows.values()]);
+        if (settled) return settled;
+      }
+    }
+  }
+
+  return fallback ?? { rows: [], match: null };
+}
+
+function lookupHitOf(row, locations, match) {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    lcscCode: row.lcsc_code ?? null,
+    model: row.model ?? null,
+    package: row.package ?? null,
+    quantity: Number(row.quantity),
+    available: row.available,
+    locationPath: locations.pathOf(row.location_id),
+    cellRow: row.cell_row == null ? null : Number(row.cell_row),
+    cellCol: row.cell_col == null ? null : Number(row.cell_col),
+    match,
+    score: MATCH_SCORES[match] ?? 0,
+  };
+}
+
+/**
+ * EDA 插件批量查料：items 每条形如 { ref, lcsc, mpn, value, package }。
+ * 返回 [{ ref, hits }]，ref 原样回传；hits 为空表示未命中，多于 1 条表示多结果。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown[]} parts
+ * @param {{ options?: unknown, limit?: unknown }} [input]
+ */
+export function lookupParts(db, parts, input = {}) {
+  if (!Array.isArray(parts)) throw ERROR.validation('items 必须是数组');
+
+  const options = resolveOptions(input.options);
+  const rawLimit = Number(input.limit);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(MAX_CANDIDATES, Math.floor(rawLimit))
+    : DEFAULT_LOOKUP_LIMIT;
+
+  const index = buildItemIndex(db, options);
+  const locations = buildLocationMaps(db);
+  const suffixIndex = buildValueSuffixIndex(index.pool);
+
+  return parts.map((part) => {
+    const group = partGroupOf(part);
+    const found = matchPart(index, suffixIndex, group, options);
+
+    const hits = found.rows
+      .slice()
+      .sort(
+        (a, b) => Number(b.available) - Number(a.available) || Number(a.id) - Number(b.id),
+      )
+      .slice(0, limit)
+      .map((row) => lookupHitOf(row, locations, found.match));
+
+    return {
+      ref: part?.ref ?? null,
+      hits: found.match ? hits : [],
+    };
+  });
+}

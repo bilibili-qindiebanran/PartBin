@@ -306,6 +306,27 @@ sudo -u partbin bash -c 'set -a; . /etc/partbin/partbin.env; set +a; cd /opt/par
 
 ---
 
+## 与其他工具集成：EDA 插件查料
+
+立创 EDA 专业版的插件需要在内网页面里查库存，但 PartBin 的会话是 `httpOnly + SameSite=Lax` 的 Cookie，状态变更还校验 Origin，跨域页面读不到。为此单独提供一个**只读**端点，用固定密钥鉴权：
+
+```
+POST /api/eda/lookup
+X-Api-Key: <EDA_API_KEY>
+Content-Type: application/json
+
+{ "items": [ { "ref": "C1,C2", "lcsc": "C14663", "mpn": "CC0603KRX7R9BB104",
+               "value": "100nF", "package": "0603" } ] }
+```
+
+- `ref` 原样回传，插件靠它做行匹配；`hits` 空数组表示未命中，多于一条表示多结果
+- 匹配复用 BOM 的匹配链：料号 → 厂家型号 → 值+封装族 → 值；`40kΩ / 40K / 40000Ω`、`C0603 / 0603 / 0603_S` 会自动归一
+- 单次最多 500 条，默认每条返回 ≤ 5 个候选；只读，不写库、不记流水
+- 未设置 `EDA_API_KEY` 时接口返回 503，密钥错误返回 401
+- 允许跨域（默认 `*`，可用 `EDA_ALLOWED_ORIGIN` 收紧）；该路径跳过 Cookie 会话与同源校验，因此**密钥只放在内网，不要暴露到公网**
+
+---
+
 ## 环境变量
 
 | 变量 | 必填 | 说明 |
@@ -327,6 +348,8 @@ sudo -u partbin bash -c 'set -a; . /etc/partbin/partbin.env; set +a; cd /opt/par
 | `LCSC_API_BASE` | 否 | 立创料号查询代理地址；留空走 JLCPCB 公开接口 |
 | `LCSC_TIMEOUT_MS` | 否 | 立创料号查询超时，默认 8000 |
 | `LCSC_CACHE_DAYS` | 否 | 料号信息缓存天数，默认 7 |
+| `EDA_API_KEY` | 否 | 启用 EDA 插件查料接口的固定密钥；留空则接口关闭 |
+| `EDA_ALLOWED_ORIGIN` | 否 | 查料接口允许的跨域来源，默认 `*` |
 
 ## 初始化后：邀请与双因素
 
