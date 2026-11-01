@@ -127,6 +127,20 @@ describe('快速入库', () => {
     expect(movements).toHaveLength(2);
     expect(movements[1].note).toBe('立创订单 SO2610270429');
     expect(movements[1].user_id).toBe(admin.body.user.id);
+
+    // 预览页填写的备注优先于订单号
+    const custom = await call('POST', '/api/lcsc/quick-in', {
+      mode: 'add',
+      code: 'C2286',
+      itemId: item.id,
+      quantity: 1,
+      note: '到货批次 B',
+    });
+    expect(custom.statusCode).toBe(200);
+    const last = ctx.app.db
+      .prepare('SELECT note FROM movement WHERE item_id = ? ORDER BY id DESC LIMIT 1')
+      .get(item.id);
+    expect(last.note).toBe('到货批次 B');
   });
 
   it('add 模式拒绝料号不一致或已归档的物料', async () => {

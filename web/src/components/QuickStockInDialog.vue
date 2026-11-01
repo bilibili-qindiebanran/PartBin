@@ -400,6 +400,7 @@ async function submit(keepScanning) {
           quantity,
           locationId: locationId.value,
           orderNo,
+          note: form.note.trim(),
         }
       : {
           mode: 'create',

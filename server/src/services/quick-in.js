@@ -50,7 +50,8 @@ export function commitQuickIn(db, input = {}, userId) {
   const code = normalizeLcscCode(input.code);
   const quantity = requireInt(input.quantity, '入库数量', { min: 1, max: 1000000 });
   const locationId = optionalId(input.locationId, '位置');
-  const note = orderNote(input.orderNo);
+  const fallbackNote = orderNote(input.orderNo);
+  const note = optionalString(input.note, '备注', { max: 500 }) ?? fallbackNote;
 
   if (input.mode === 'add') {
     const itemId = requireId(input.itemId, '物料');
@@ -98,8 +99,8 @@ export function commitQuickIn(db, input = {}, userId) {
         lcscMatched: true,
         locationId,
         // 备注留空时把订单号写进去，便于回溯来源
-        note: optionalString(fields.note, '备注', { max: 2000 }) ?? note,
-        initialNote: note,
+        note: optionalString(fields.note, '备注', { max: 2000 }) ?? fallbackNote,
+        initialNote: fallbackNote,
       },
       userId,
     );
