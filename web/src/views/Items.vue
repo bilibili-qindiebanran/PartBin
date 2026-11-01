@@ -12,7 +12,13 @@
         <el-button v-if="auth.canWrite" :icon="Aim" @click="reconcileVisible = true">
           快速对料
         </el-button>
-        <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
+        <el-button
+          v-if="auth.canWrite"
+          class="btn-create"
+          type="primary"
+          :icon="Plus"
+          @click="openCreate"
+        >
           新建物料
         </el-button>
       </template>
@@ -20,6 +26,7 @@
 
     <BinWall
       v-if="view === 'box'"
+      ref="binWallRef"
       :can-write="auth.canWrite"
       @open-item="openDetail"
     />
@@ -202,6 +209,7 @@ const movementType = ref('in');
 
 const quickInVisible = ref(false);
 const reconcileVisible = ref(false);
+const binWallRef = ref(null);
 
 const VIEW_KEY = 'partbin:items-view';
 const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
@@ -330,6 +338,8 @@ function handleMovementSaved() {
 function handleSaved() {
   dialogVisible.value = false;
   load();
+  // 盒视图自带数据，保存后同步刷新，避免两个视图数量不一致
+  binWallRef.value?.reload();
 }
 
 async function archiveItem(item) {
@@ -408,21 +418,54 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 767px) {
-  /* 操作区两列网格：切换器独占一行，两个按钮等宽对齐 */
+  /* 操作区两列网格：视图切换与「新建物料」同一行，扫码类操作放下一行 */
   :deep(.page-header__actions) {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
 
-  :deep(.page-header__actions .el-radio-group) {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
+  :deep(.page-header__actions > .el-radio-group) {
+    grid-row: 1;
+    grid-column: 1;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    height: 32px;
+    width: 100%;
   }
 
-  :deep(.page-header__actions .el-button) {
+  /* 两个切换按钮均分所在列，高度对齐「新建物料」 */
+  :deep(.page-header__actions > .el-radio-group .el-radio-button) {
+    display: flex;
+    flex: 1;
+  }
+
+  :deep(.page-header__actions > .el-radio-group .el-radio-button__inner) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+
+  :deep(.page-header__actions > .btn-create) {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  :deep(.page-header__actions > .el-button:not(.btn-create)) {
+    grid-row: 2;
+  }
+
+  :deep(.page-header__actions > .el-button) {
     width: 100%;
     margin-left: 0;
+  }
+
+  /* 只读账号没有按钮时，切换器占满整行 */
+  :deep(.page-header__actions > .el-radio-group:only-child) {
+    grid-column: 1 / -1;
   }
 
   /* 筛选栏同样两列网格，避免宽度不一致的控件拼接后参差不齐 */
@@ -452,6 +495,13 @@ onBeforeUnmount(() => {
 
   .pager {
     justify-content: center;
+  }
+
+  /* 分页条在窄屏会撑出横向滚动，允许换行 */
+  .pager :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 8px;
   }
 }
 </style>
