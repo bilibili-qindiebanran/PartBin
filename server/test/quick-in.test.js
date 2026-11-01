@@ -78,6 +78,24 @@ describe('快速入库', () => {
     expect(res.json().existing).toMatchObject({ id: item.id, quantity: 3 });
   });
 
+  it('上游不可用时降级返回已有物料与提示', async () => {
+    const item = await createItem({
+      name: '0603 红灯',
+      lcscCode: 'C2286',
+      quantity: 3,
+    });
+    ctx.app.lcscFetch = async () => {
+      throw new Error('network down');
+    };
+
+    const res = await call('POST', '/api/lcsc/quick-in/preview', { code: 'C2286' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.part).toBeNull();
+    expect(body.existing).toMatchObject({ id: item.id });
+    expect(body.warning).toContain('立创');
+  });
+
   it('add 模式累加数量、写流水并补位置', async () => {
     const location = await call('POST', '/api/locations', { name: '工具柜' });
     const locationId = location.json().location.id;

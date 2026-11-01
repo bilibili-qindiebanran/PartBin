@@ -12,14 +12,30 @@ function orderNote(orderNo) {
 
 /**
  * 快速入库预览：查立创信息，并判断库存里是否已有同料号物料。
- * 上游失败会抛错，前端可退回手工填写。
+ * 上游查不到/连不上时不报错，返回 part=null + warning，前端仍可手工补全后入库。
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} rawCode
  * @param {Parameters<typeof lookupLcsc>[2]} [options]
  */
 export async function previewQuickIn(db, rawCode, options = {}) {
-  const { part, cached, source } = await lookupLcsc(db, rawCode, options);
-  return { part, existing: findItemByLcscCode(db, part.code), cached, source };
+  // 先本地查重，上游失败也不影响「累加到已有物料」
+  const existing = findItemByLcscCode(db, normalizeLcscCode(rawCode));
+
+  try {
+    const { part, cached, source } = await lookupLcsc(db, rawCode, options);
+    return { part, existing, cached, source, warning: null };
+  } catch (error) {
+    const degradable =
+      error?.code === 'UPSTREAM_UNAVAILABLE' || error?.code === 'NOT_FOUND';
+    if (!degradable) throw error;
+    return {
+      part: null,
+      existing,
+      cached: false,
+      source: null,
+      warning: error.message,
+    };
+  }
 }
 
 /**
