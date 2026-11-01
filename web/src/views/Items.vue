@@ -399,11 +399,6 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
-  :deep(.page-header__actions) {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
   .toolbar__search {
     flex-basis: 100%;
   }
