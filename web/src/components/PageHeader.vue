@@ -45,14 +45,38 @@ defineProps({
   flex-shrink: 0;
 }
 
+/* 间距统一交给 gap；否则换行后第二个按钮会带 12px 左边距而错位 */
+.page-header__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+/* 页面给了 #actions 插槽但内容为空（例如 v-if 不成立）时不留空行 */
+.page-header__actions:empty {
+  display: none;
+}
+
 @media (max-width: 767px) {
   .page-header {
+    /* 标题与操作上下两行：否则按钮较多时标题会被压成竖排 */
+    flex-wrap: wrap;
     align-items: flex-start;
+    gap: 10px;
     margin-bottom: var(--space-4);
+  }
+
+  .page-header__text {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .page-header__text h1 {
     font-size: 18px;
+  }
+
+  .page-header__actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 </style>

@@ -167,6 +167,9 @@ tar czf "$APP_TGZ" -C "$ROOT" \
   --exclude=./web/dist \
   --exclude=./.pnpm-store \
   --exclude=./.env \
+  --exclude=./.cert \
+  --exclude=./web/.cert \
+  --exclude=./deploy/deploy.local.env \
   --exclude='*.log' \
   --exclude='*.db' \
   --exclude='*.db-wal' \

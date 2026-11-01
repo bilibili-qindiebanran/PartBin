@@ -6,6 +6,9 @@
           <el-radio-button value="table">表格</el-radio-button>
           <el-radio-button value="box">盒视图</el-radio-button>
         </el-radio-group>
+        <el-button v-if="auth.canWrite" :icon="Camera" @click="quickInVisible = true">
+          快速入库
+        </el-button>
         <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
           新建物料
         </el-button>
@@ -136,14 +139,20 @@
       :default-type="movementType"
       @saved="handleMovementSaved"
     />
+
+    <QuickStockInDialog
+      v-model="quickInVisible"
+      :locations="dictionary.locationOptions"
+      @saved="load"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Box, Plus, Refresh, Search } from '@element-plus/icons-vue';
+import { Box, Camera, Plus, Refresh, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
@@ -151,6 +160,11 @@ import ItemCard from '@/components/ItemCard.vue';
 import BinWall from '@/components/BinWall.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
+
+// 扫码依赖 jsqr，按需加载，不进首屏包
+const QuickStockInDialog = defineAsyncComponent(
+  () => import('@/components/QuickStockInDialog.vue'),
+);
 import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
@@ -173,6 +187,8 @@ const editingItem = ref(null);
 const movementVisible = ref(false);
 const movementItem = ref(null);
 const movementType = ref('in');
+
+const quickInVisible = ref(false);
 
 const VIEW_KEY = 'partbin:items-view';
 const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
@@ -379,17 +395,46 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 767px) {
+  /* 操作区两列网格：切换器独占一行，两个按钮等宽对齐 */
+  :deep(.page-header__actions) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  :deep(.page-header__actions .el-radio-group) {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  :deep(.page-header__actions .el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  /* 筛选栏同样两列网格，避免宽度不一致的控件拼接后参差不齐 */
   .toolbar {
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 8px;
   }
 
   .toolbar__search {
-    flex-basis: 100%;
+    grid-column: 1 / -1;
   }
 
   .toolbar__select,
   .toolbar__sort {
-    width: calc(50% - 5px);
+    width: 100%;
+  }
+
+  .toolbar :deep(.el-checkbox) {
+    margin-right: 0;
+  }
+
+  .toolbar :deep(.el-button + .el-button) {
+    margin-left: 0;
   }
 
   .pager {

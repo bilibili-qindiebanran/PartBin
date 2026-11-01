@@ -236,6 +236,17 @@ export function listItems(db, query = {}) {
   };
 }
 
+/**
+ * 按立创料号查找未归档物料（快速入库预览用）。
+ * @returns {ReturnType<typeof getItem> | null}
+ */
+export function findItemByLcscCode(db, code) {
+  const row = db
+    .prepare(`${ITEM_SELECT} WHERE i.lcsc_code = ? AND i.is_archived = 0 ORDER BY i.id DESC LIMIT 1`)
+    .get(code);
+  return row ? getItem(db, Number(row.id)) : null;
+}
+
 /** 详情（含照片列表） */
 export function getItem(db, id) {
   const row = getRow(db, id);
@@ -255,7 +266,7 @@ export function getItem(db, id) {
   return { ...toPublicItem(row, taxonomies), photos };
 }
 
-/** 新建物料；数量制会同时写一条初始入库流水 */
+/** 新建物料；数量制会同时写一条初始入库流水（备注可用 initialNote 覆盖） */
 export function createItem(db, input = {}, userId) {
   return withTransaction(db, () => {
     const name = requireString(input.name, '物料名称', { min: 1, max: 200 });
@@ -293,6 +304,8 @@ export function createItem(db, input = {}, userId) {
     const priceCents = toCents(input.price);
     const purchaseDate = optionalDate(input.purchaseDate, '购买日期');
     const note = optionalString(input.note, '备注', { max: 2000 });
+    const initialNote =
+      optionalString(input.initialNote, '入库备注', { max: 500 }) ?? '初始入库';
     const lcscCode = normalizeOptionalLcsc(input.lcscCode);
     const lcscMatchedAt = lcscCode && input.lcscMatched === true ? nowIso() : null;
 
@@ -357,7 +370,7 @@ export function createItem(db, input = {}, userId) {
         `INSERT INTO movement (
            item_id, user_id, type, quantity, quantity_delta, balance_after, note, occurred_at, created_at
          ) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?)`,
-      ).run(itemId, userId, quantity, quantity, quantity, '初始入库', now, now);
+      ).run(itemId, userId, quantity, quantity, quantity, initialNote, now, now);
     }
 
     return getItem(db, itemId);
