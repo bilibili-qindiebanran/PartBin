@@ -20,16 +20,18 @@ export function loadAliasMap(db) {
   return map;
 }
 
-/** 列表：附带物料名称/封装/库存，便于前端展示与撤销 */
+/** 列表：附带物料名称/封装/库存与创建人，便于前端展示与撤销 */
 export function listAliases(db) {
   return db
     .prepare(
       `SELECT a.id, a.match_key, a.kind, a.item_id, a.skip_params, a.note,
-              a.created_at, a.updated_at,
+              a.created_at, a.updated_at, a.created_by,
               i.name AS item_name, i.package AS item_package,
-              i.quantity AS item_quantity, i.is_archived AS item_archived
+              i.quantity AS item_quantity, i.is_archived AS item_archived,
+              u.username AS created_by_name
        FROM bom_alias a
        LEFT JOIN item i ON i.id = a.item_id
+       LEFT JOIN user u ON u.id = a.created_by
        ORDER BY a.id DESC`,
     )
     .all()
@@ -44,6 +46,7 @@ export function listAliases(db) {
       itemPackage: row.item_package ?? null,
       itemQuantity: row.item_quantity == null ? null : Number(row.item_quantity),
       itemArchived: Number(row.item_archived) === 1,
+      createdBy: row.created_by_name ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -113,4 +116,29 @@ export function deleteAliasByKey(db, matchKey) {
 
   db.prepare('DELETE FROM bom_alias WHERE id = ?').run(Number(row.id));
   return { id: Number(row.id), matchKey: row.match_key, itemId: Number(row.item_id) };
+}
+
+/**
+ * 批量删除（管理页多选）。返回实际删除的记录，供审计。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown} ids
+ */
+export function deleteAliases(db, ids) {
+  if (!Array.isArray(ids)) throw ERROR.validation('ids 必须是数组');
+  const unique = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+  if (unique.length === 0) throw ERROR.validation('没有可删除的记录');
+  if (unique.length > 200) throw ERROR.validation('一次最多删除 200 条');
+
+  const placeholders = unique.map(() => '?').join(', ');
+  const rows = db
+    .prepare(`SELECT id, match_key, item_id FROM bom_alias WHERE id IN (${placeholders})`)
+    .all(...unique);
+  if (rows.length === 0) throw ERROR.notFound('对应关系不存在');
+
+  db.prepare(`DELETE FROM bom_alias WHERE id IN (${placeholders})`).run(...unique);
+  return rows.map((row) => ({
+    id: Number(row.id),
+    matchKey: row.match_key,
+    itemId: Number(row.item_id),
+  }));
 }

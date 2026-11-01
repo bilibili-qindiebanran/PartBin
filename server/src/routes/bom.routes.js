@@ -3,6 +3,7 @@ import { matchBom, rematchGroups, resolveOptions, kindOfKey } from '../services/
 import {
   deleteAlias,
   deleteAliasByKey,
+  deleteAliases,
   listAliases,
   upsertAlias,
 } from '../services/bom-alias.js';
@@ -166,5 +167,21 @@ export default async function bomRoutes(app) {
       ipHash: request.ipHash,
     });
     return { removed: true };
+  });
+
+  /** 批量删除（管理页多选），单次最多 200 条 */
+  app.post('/api/bom/aliases/delete', { preHandler: app.requireAdmin }, async (request) => {
+    enforce(app.limiters.bomAlias, String(request.user.id));
+
+    const removed = deleteAliases(db, request.body?.ids);
+    recordAudit(db, {
+      actorId: request.user.id,
+      action: 'bom.alias.batch_delete',
+      targetType: 'bom_alias',
+      targetId: null,
+      detail: { count: removed.length, matchKeys: removed.slice(0, 20).map((row) => row.matchKey) },
+      ipHash: request.ipHash,
+    });
+    return { removed: removed.length };
   });
 }

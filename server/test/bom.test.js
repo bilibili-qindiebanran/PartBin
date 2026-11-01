@@ -472,6 +472,58 @@ describe('BOM 匹配', () => {
     expect(list.statusCode).toBe(200);
   });
 
+  it('对应关系列表带创建人，支持批量删除', async () => {
+    const created = await call('POST', '/api/items', {
+      name: '0603 22pF 50V',
+      unit: '个',
+      quantity: 50,
+      package: '0603',
+    });
+    const itemId = created.json().item.id;
+
+    for (const [index, key] of ['val:0603|c:2.2e-11', 'name:22pf'].entries()) {
+      const res = await call('POST', '/api/bom/resolve', {
+        matchKey: key,
+        itemId,
+        action: 'bind',
+        note: `第 ${index + 1} 条`,
+      });
+      expect(res.statusCode).toBe(201);
+    }
+
+    const list = await call('GET', '/api/bom/aliases');
+    const rows = list.json().data;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      kind: 'name',
+      itemId,
+      itemName: '0603 22pF 50V',
+      itemQuantity: 50,
+      itemArchived: false,
+      createdBy: 'admin',
+      note: '第 2 条',
+    });
+    expect(rows[1].kind).toBe('val');
+
+    const removed = await call('POST', '/api/bom/aliases/delete', {
+      ids: rows.map((row) => row.id),
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().removed).toBe(2);
+    expect((await call('GET', '/api/bom/aliases')).json().data).toHaveLength(0);
+  });
+
+  it('只读账号不能批量删除对应关系', async () => {
+    const reader = await createUserAccount(ctx, 'reader2');
+    const res = await request(ctx.app, {
+      method: 'POST',
+      url: '/api/bom/aliases/delete',
+      cookie: reader.cookie,
+      payload: { ids: [1] },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('缺少关键列时报 400', async () => {
     const res = await call('POST', '/api/bom/preview', { csvText: '批次,日期\n1,2026-01-01' });
     expect(res.statusCode).toBe(400);

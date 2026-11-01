@@ -2,6 +2,10 @@
   <div class="page">
     <PageHeader title="BOM 匹配" subtitle="上传立创 EDA / 嘉立创导出的 BOM，检查库存、缺口与取料位置。">
       <template #actions>
+        <el-button :icon="Link" @click="router.push('/bom/aliases')">
+          对应关系
+          <template v-if="aliasCount > 0">（{{ aliasCount }}）</template>
+        </el-button>
         <el-button v-if="report" :icon="Download" @click="exportCsv">导出报表</el-button>
       </template>
     </PageHeader>
@@ -259,14 +263,16 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Download, Files, Grid, UploadFilled } from '@element-plus/icons-vue';
+import { Download, Files, Grid, Link, UploadFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import { api, apiUpload } from '@/api/client';
 
 const uploadRef = ref(null);
+const router = useRouter();
 const file = ref(null);
 const sets = ref(1);
 const loading = ref(false);
@@ -375,6 +381,8 @@ async function loadAliases() {
     aliasCount.value = 0;
   }
 }
+
+onMounted(loadAliases);
 
 /** 把人工覆盖回传服务端重算，库存/缺口/可支持套数都会跟着变 */
 async function applyOverrides() {

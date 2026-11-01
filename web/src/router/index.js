@@ -9,6 +9,7 @@ const Dashboard = () => import('@/views/Dashboard.vue');
 const Items = () => import('@/views/Items.vue');
 const Bins = () => import('@/views/Bins.vue');
 const Bom = () => import('@/views/Bom.vue');
+const BomAliases = () => import('@/views/BomAliases.vue');
 const ItemDetail = () => import('@/views/ItemDetail.vue');
 const Movements = () => import('@/views/Movements.vue');
 const Loans = () => import('@/views/Loans.vue');
@@ -29,6 +30,12 @@ const routes = [
       { path: 'items', name: 'items', component: Items, meta: { title: '库存' } },
       { path: 'bins', name: 'bins', component: Bins, meta: { title: '元件盒' } },
       { path: 'bom', name: 'bom', component: Bom, meta: { title: 'BOM 匹配' } },
+      {
+        path: 'bom/aliases',
+        name: 'bom-aliases',
+        component: BomAliases,
+        meta: { title: 'BOM 对应关系' },
+      },
       {
         path: 'items/:id',
         name: 'item-detail',
