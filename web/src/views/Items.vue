@@ -6,6 +6,9 @@
           <el-radio-button value="table">表格</el-radio-button>
           <el-radio-button value="box">盒视图</el-radio-button>
         </el-radio-group>
+        <el-button v-if="auth.canWrite" :icon="Camera" @click="quickInVisible = true">
+          快速入库
+        </el-button>
         <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
           新建物料
         </el-button>
@@ -136,14 +139,20 @@
       :default-type="movementType"
       @saved="handleMovementSaved"
     />
+
+    <QuickStockInDialog
+      v-model="quickInVisible"
+      :locations="dictionary.locationOptions"
+      @saved="load"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Box, Plus, Refresh, Search } from '@element-plus/icons-vue';
+import { Box, Camera, Plus, Refresh, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
@@ -151,6 +160,11 @@ import ItemCard from '@/components/ItemCard.vue';
 import BinWall from '@/components/BinWall.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
+
+// 扫码依赖 jsqr，按需加载，不进首屏包
+const QuickStockInDialog = defineAsyncComponent(
+  () => import('@/components/QuickStockInDialog.vue'),
+);
 import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useAuthStore } from '@/stores/auth';
 import { useDictionaryStore } from '@/stores/dictionary';
@@ -173,6 +187,8 @@ const editingItem = ref(null);
 const movementVisible = ref(false);
 const movementItem = ref(null);
 const movementType = ref('in');
+
+const quickInVisible = ref(false);
 
 const VIEW_KEY = 'partbin:items-view';
 const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
@@ -381,6 +397,11 @@ onBeforeUnmount(() => {
 @media (max-width: 767px) {
   .toolbar {
     align-items: stretch;
+  }
+
+  :deep(.page-header__actions) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .toolbar__search {
