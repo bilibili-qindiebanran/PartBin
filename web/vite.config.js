@@ -23,6 +23,9 @@ export default defineConfig({
     host: true,
     port: 5180,
     strictPort: true,
+    // Vite 5+ 会校验 Host 头；真机测扫码走 tailscale serve / 隧道时需要放行这些域名。
+    // 仅开发服务器生效，不影响生产构建。
+    allowedHosts: ['.lan', '.ts.net', '.trycloudflare.com'],
     proxy: {
       '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false },
       '/health': { target: 'http://127.0.0.1:8787', changeOrigin: false },
