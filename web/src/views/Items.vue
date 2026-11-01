@@ -177,7 +177,7 @@ import BinWall from '@/components/BinWall.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
 
-// 扫码依赖 jsqr，按需加载，不进首屏包
+// 扫码依赖 zxing + 二维码解码管线，按需加载，不进首屏包
 const QuickStockInDialog = defineAsyncComponent(
   () => import('@/components/QuickStockInDialog.vue'),
 );

@@ -2,37 +2,49 @@
   <div class="scanner">
     <div class="scanner__stage">
       <video ref="videoRef" class="scanner__video" playsinline muted autoplay />
-      <canvas ref="canvasRef" class="scanner__canvas" />
       <div class="scanner__reticle" aria-hidden="true" />
       <p v-if="status === 'starting'" class="scanner__hint">正在启动摄像头…</p>
       <p v-else-if="status === 'error'" class="scanner__hint scanner__hint--error">
         {{ errorText }}
       </p>
     </div>
-    <p class="scanner__tip">二维码放进方框即可，方框内就是识别区域</p>
+    <p class="scanner__tip">
+      二维码放进方框即可自动识别；识别不到时稍微移远或移近一点，会自动换倍率重试
+    </p>
   </div>
 </template>
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import jsQR from 'jsqr';
+import { createQrDecoder, WIDTH_LADDER } from '@/lib/qr-decode';
 
 const emit = defineEmits(['detected']);
 
 const videoRef = ref(null);
-const canvasRef = ref(null);
 const status = ref('starting');
 const errorText = ref('');
 
 /** 取景框在容器里的内缩比例，必须与 .scanner__reticle 的 inset 保持一致 */
 const RETICLE_INSET = 0.12;
-/** 解码画面上限：分辨率再高也不会让 jsQR 更准，只会更慢 */
-const MAX_DECODE_WIDTH = 960;
+/** 每帧间隔。解码要跑多个倍率，比 jsQR 单次略重，120ms 在手机上仍然流畅 */
+const FRAME_INTERVAL = 120;
+/**
+ * 每帧尝试的倍率个数，按实测耗时自适应。
+ * 一帧内试得越多收敛越快，但会拖慢渲染；用时间预算把它控在 25ms 左右。
+ */
+const DECODE_BUDGET_MS = 25;
+/** 全画面兜底：二维码跑出取景框时多探一步，每隔几帧做一次 */
+const WIDE_INTERVAL = 3;
+const WIDE_WIDTHS = [320, 220];
+
+const decoder = createQrDecoder();
 
 let stream = null;
 let timer = null;
 let finished = false;
 let frameTick = 0;
+let ladderCursor = 0;
+let widthsPerFrame = 2;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -66,11 +78,11 @@ function stop() {
 }
 
 /**
- * 把视频里「容器坐标系中的一个矩形」映射回原始像素并画到 canvas。
+ * 把视频里「容器坐标系中的一个矩形」映射回原始像素。
  * video 用 object-fit: cover 展示，会等比放大并裁掉溢出部分，
  * 所以这里必须按 cover 的缩放关系反算，才能做到「框内所见即所解」。
  */
-function drawRegion(video, canvas, box) {
+function sourceRect(video, box) {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   const cw = video.clientWidth || 1;
@@ -80,68 +92,84 @@ function drawRegion(video, canvas, box) {
   const offsetX = (vw * scale - cw) / 2;
   const offsetY = (vh * scale - ch) / 2;
 
-  const sx = clamp((box.x + offsetX) / scale, 0, vw - 1);
-  const sy = clamp((box.y + offsetY) / scale, 0, vh - 1);
-  const sw = clamp(box.w / scale, 1, vw - sx);
-  const sh = clamp(box.h / scale, 1, vh - sy);
+  const x = clamp((box.x + offsetX) / scale, 0, vw - 1);
+  const y = clamp((box.y + offsetY) / scale, 0, vh - 1);
+  return {
+    x,
+    y,
+    w: clamp(box.w / scale, 1, vw - x),
+    h: clamp(box.h / scale, 1, vh - y),
+  };
+}
 
-  const outW = Math.max(1, Math.round(Math.min(sw, MAX_DECODE_WIDTH)));
-  const outH = Math.max(1, Math.round((sh * outW) / sw));
-
-  if (canvas.width !== outW || canvas.height !== outH) {
-    canvas.width = outW;
-    canvas.height = outH;
+/** 从宽度阶梯里取本帧要试的几个倍率，跨帧轮转避免每帧都跑满 */
+function pickWidths(count) {
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    picked.push(WIDTH_LADDER[(ladderCursor + i) % WIDTH_LADDER.length]);
   }
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  context.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH);
-  return context.getImageData(0, 0, outW, outH);
+  ladderCursor = (ladderCursor + count) % WIDTH_LADDER.length;
+  return picked;
 }
 
 function scanFrame() {
   if (finished) return;
-  timer = setTimeout(scanFrame, 150);
+  timer = setTimeout(scanFrame, FRAME_INTERVAL);
 
   const video = videoRef.value;
-  const canvas = canvasRef.value;
-  if (!video || !canvas || video.readyState < 2 || !video.videoWidth) return;
+  if (!video || video.readyState < 2 || !video.videoWidth) return;
 
   const cw = video.clientWidth || 1;
   const ch = video.clientHeight || 1;
-  const inner = {
+  const reticle = {
     x: cw * RETICLE_INSET,
     y: ch * RETICLE_INSET,
     w: cw * (1 - RETICLE_INSET * 2),
     h: ch * (1 - RETICLE_INSET * 2),
   };
 
-  // 主路径：只解码取景框内的原始像素，等效放大，近距离也能出结果
-  const image = drawRegion(video, canvas, inner);
-  let result = jsQR(image.data, image.width, image.height, {
-    inversionAttempts: 'attemptBoth',
-  });
+  // 主路径：只解取景框内的像素，倍率跨帧轮转
+  const box = sourceRect(video, reticle);
+  const startedAt = performance.now();
+  let text = decoder.decode(video, box, pickWidths(widthsPerFrame));
 
-  // 兜底：二维码略偏出框时，每 4 帧扫一次全画面（降采样，便宜）
-  if (!result && ++frameTick % 4 === 0) {
-    const full = drawRegion(video, canvas, { x: 0, y: 0, w: cw, h: ch });
-    result = jsQR(full.data, full.width, full.height, {
-      inversionAttempts: 'dontInvert',
-    });
+  // 按实际耗时调下一帧的采样档数，让单帧解码开销稳定在预算附近
+  const cost = performance.now() - startedAt;
+  if (cost < DECODE_BUDGET_MS * 0.5) widthsPerFrame = Math.min(6, widthsPerFrame + 1);
+  else if (cost > DECODE_BUDGET_MS * 1.2) widthsPerFrame = Math.max(1, widthsPerFrame - 1);
+
+  // 兜底：二维码略偏出框时，隔几帧扫一次全画面（低倍率，便宜）
+  if (!text && ++frameTick % WIDE_INTERVAL === 0) {
+    text = decoder.decode(
+      video,
+      { x: 0, y: 0, w: video.videoWidth, h: video.videoHeight },
+      WIDE_WIDTHS,
+    );
   }
 
-  if (result?.data) {
+  if (text) {
     stop();
     status.value = 'found';
-    emit('detected', result.data);
+    emit('detected', text);
   }
 }
 
-/** 读取设备的对焦能力；不支持就静默跳过 */
-async function prepareTrack(videoTrack) {
+/** 读取设备的对焦/曝光能力；不支持就静默跳过 */
+async function prepareTrack(track) {
   // 连续自动对焦：手机上近距离扫码成败的关键
   try {
-    await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
   } catch {
     // 绝大多数桌面摄像头没有 focusMode，忽略
+  }
+  // 手动曝光时画面容易忽明忽暗，能自动就交给自动
+  try {
+    const capabilities = track.getCapabilities?.() ?? {};
+    if (capabilities.exposureMode?.includes('continuous')) {
+      await track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] });
+    }
+  } catch {
+    // 忽略
   }
 }
 
@@ -160,8 +188,9 @@ async function start() {
         facingMode: { ideal: 'environment' },
         // 与 4:3 的取景框保持一致，避免 object-fit: cover 裁切导致显示与解码错位
         aspectRatio: { ideal: 4 / 3 },
-        width: { ideal: 1280 },
-        height: { ideal: 960 },
+        // 取高分辨率：解码时会自己降采样，源图更细才能扛住失焦和塑料袋反光
+        width: { ideal: 1920 },
+        height: { ideal: 1440 },
       },
     });
     if (finished) {
@@ -207,10 +236,6 @@ onBeforeUnmount(stop);
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.scanner__canvas {
-  display: none;
 }
 
 .scanner__reticle {
