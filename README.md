@@ -296,7 +296,7 @@ sudo -u partbin bash -c 'set -a; . /etc/partbin/partbin.env; set +a; cd /opt/par
 | --- | --- | --- |
 | `NODE_ENV` | 生产 | `production` 时强制校验密钥并默认安全 Cookie |
 | `HOST` / `PORT` | 否 | 默认 `127.0.0.1:8787`；容器内为 `0.0.0.0:8787` |
-| `DATA_DIR` | 否 | 数据目录，默认 `./data`；生产建议 `/var/lib/partbin` |
+| `DATA_DIR` | 否 | 数据目录，默认 `./data`（相对仓库根，与启动时的工作目录无关）；生产建议 `/var/lib/partbin` |
 | `APP_SECRET` | 生产 | TOTP 加密、IP 哈希；至少 32 字节随机值 |
 | `PUBLIC_ORIGIN` | 生产 | 公开站点地址，必须与访问域名一致 |
 | `COOKIE_SECURE` | 生产 | HTTPS 下为 `true`；启用 `__Host-` Cookie |

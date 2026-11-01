@@ -26,7 +26,10 @@ function toBool(value, fallback) {
 const DEV_SECRET = 'dev-only-secret-change-me-32-bytes-min';
 
 export function loadConfig(overrides = {}) {
-  const dataDir = overrides.dataDir ?? process.env.DATA_DIR ?? path.join(ROOT_DIR, 'data');
+  // 相对路径统一以仓库根为基准：pnpm start（cwd=根）与 pnpm dev（cwd=server/）
+  // 必须指向同一个数据目录，否则会各用各的 .db
+  const rawDataDir = overrides.dataDir ?? process.env.DATA_DIR ?? 'data';
+  const dataDir = path.resolve(ROOT_DIR, rawDataDir);
   const nodeEnv = overrides.nodeEnv ?? process.env.NODE_ENV ?? 'development';
   const providedSecret = overrides.appSecret ?? process.env.APP_SECRET;
   const publicOrigin = overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN ?? '';
@@ -47,7 +50,7 @@ export function loadConfig(overrides = {}) {
     nodeEnv,
     host: overrides.host ?? process.env.HOST ?? '127.0.0.1',
     port: toInt(overrides.port ?? process.env.PORT, 8787),
-    dataDir: path.resolve(dataDir),
+    dataDir,
     sessionDays: toInt(overrides.sessionDays ?? process.env.SESSION_DAYS, 7),
     sessionAbsoluteDays: toInt(overrides.sessionAbsoluteDays ?? process.env.SESSION_ABSOLUTE_DAYS, 30),
     cookieSecure: toBool(overrides.cookieSecure ?? process.env.COOKIE_SECURE, nodeEnv === 'production'),
