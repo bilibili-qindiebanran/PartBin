@@ -395,17 +395,46 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 767px) {
+  /* 操作区两列网格：切换器独占一行，两个按钮等宽对齐 */
+  :deep(.page-header__actions) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  :deep(.page-header__actions .el-radio-group) {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  :deep(.page-header__actions .el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  /* 筛选栏同样两列网格，避免宽度不一致的控件拼接后参差不齐 */
   .toolbar {
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 8px;
   }
 
   .toolbar__search {
-    flex-basis: 100%;
+    grid-column: 1 / -1;
   }
 
   .toolbar__select,
   .toolbar__sort {
-    width: calc(50% - 5px);
+    width: 100%;
+  }
+
+  .toolbar :deep(.el-checkbox) {
+    margin-right: 0;
+  }
+
+  .toolbar :deep(.el-button + .el-button) {
+    margin-left: 0;
   }
 
   .pager {

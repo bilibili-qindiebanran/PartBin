@@ -45,6 +45,11 @@ defineProps({
   flex-shrink: 0;
 }
 
+/* 间距统一交给 gap；否则换行后第二个按钮会带 12px 左边距而错位 */
+.page-header__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
 /* 页面给了 #actions 插槽但内容为空（例如 v-if 不成立）时不留空行 */
 .page-header__actions:empty {
   display: none;
