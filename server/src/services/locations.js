@@ -1,3 +1,4 @@
+import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { assertNoCycle, buildPathMap, buildTree } from '../lib/tree.js';
 import { nowIso } from '../lib/time.js';
@@ -6,6 +7,7 @@ import { optionalId, optionalInt, optionalString, requireString } from '../lib/v
 const NAME = { min: 1, max: 60 };
 const CODE = { max: 40 };
 const NOTE = { max: 500 };
+const GRID_LIMIT = 52;
 
 function allRows(db) {
   return db.prepare('SELECT * FROM location').all();
@@ -20,8 +22,57 @@ function toNode(row, paths, children = []) {
     code: row.code ?? null,
     note: row.note ?? null,
     sortOrder: Number(row.sort_order),
+    gridRows: row.grid_rows == null ? null : Number(row.grid_rows),
+    gridCols: row.grid_cols == null ? null : Number(row.grid_cols),
+    isGrid: row.grid_rows != null && row.grid_cols != null,
     children,
   };
+}
+
+/**
+ * 归一化网格尺寸：两个都为 null 表示普通位置/大盒；否则必须是 1–52 的整数对。
+ * @returns {{ gridRows: number|null, gridCols: number|null }}
+ */
+function normalizeGrid(input, current = {}) {
+  const has = (key) => Object.prototype.hasOwnProperty.call(input, key);
+  let gridRows = has('gridRows')
+    ? optionalInt(input.gridRows, '网格行数', { min: 1, max: GRID_LIMIT })
+    : current.gridRows ?? null;
+  let gridCols = has('gridCols')
+    ? optionalInt(input.gridCols, '网格列数', { min: 1, max: GRID_LIMIT })
+    : current.gridCols ?? null;
+
+  if (gridRows == null && gridCols == null) return { gridRows: null, gridCols: null };
+  if (gridRows == null || gridCols == null) {
+    throw ERROR.validation('分类盒需要同时设置网格行数与列数');
+  }
+  return { gridRows, gridCols };
+}
+
+/** 网格缩小或取消时，确保已有格位仍然合法 */
+function ensureCellsFit(db, id, gridRows, gridCols) {
+  if (gridRows == null || gridCols == null) {
+    const used = Number(
+      db
+        .prepare('SELECT COUNT(*) AS c FROM item WHERE location_id = ? AND cell_row IS NOT NULL')
+        .get(id).c,
+    );
+    if (used > 0) {
+      throw ERROR.conflict('该位置已有物料格位，若要改为大盒请先清空格位');
+    }
+    return;
+  }
+
+  const outside = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM item
+       WHERE location_id = ? AND cell_row IS NOT NULL
+         AND (cell_row > ? OR cell_col > ?)`,
+    )
+    .get(id, gridRows, gridCols).c;
+  if (Number(outside) > 0) {
+    throw ERROR.conflict(`新网格容纳不下已有格位，请先调整 ${outside} 个物料的位置`);
+  }
 }
 
 /** 位置树（柜/层/盒，含 path） */
@@ -51,6 +102,7 @@ export function createLocation(db, input = {}) {
   const code = optionalString(input.code, '位置编号', CODE);
   const note = optionalString(input.note, '备注', NOTE);
   const sortOrder = optionalInt(input.sortOrder, '排序', { min: -10000, max: 10000 }) ?? 0;
+  const { gridRows, gridCols } = normalizeGrid(input);
   ensureParent(db, parentId);
 
   const now = nowIso();
@@ -58,9 +110,10 @@ export function createLocation(db, input = {}) {
   try {
     inserted = db
       .prepare(
-        'INSERT INTO location (parent_id, name, code, note, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        `INSERT INTO location (parent_id, name, code, note, sort_order, grid_rows, grid_cols, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(parentId, name, code, note, sortOrder, now, now);
+      .run(parentId, name, code, note, sortOrder, gridRows, gridCols, now, now);
   } catch (error) {
     if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('同级下已有同名位置');
     throw error;
@@ -85,22 +138,53 @@ export function updateLocation(db, id, input = {}) {
   const sortOrder = has('sortOrder')
     ? (optionalInt(input.sortOrder, '排序', { min: -10000, max: 10000 }) ?? 0)
     : Number(current.sort_order);
+  const { gridRows, gridCols } = normalizeGrid(input, {
+    gridRows: current.grid_rows == null ? null : Number(current.grid_rows),
+    gridCols: current.grid_cols == null ? null : Number(current.grid_cols),
+  });
 
   if (parentId != null) {
     ensureParent(db, parentId);
     assertNoCycle(allRows(db), id, parentId);
   }
+  ensureCellsFit(db, id, gridRows, gridCols);
 
   try {
     db.prepare(
-      'UPDATE location SET parent_id = ?, name = ?, code = ?, note = ?, sort_order = ?, updated_at = ? WHERE id = ?',
-    ).run(parentId, name, code, note, sortOrder, nowIso(), id);
+      `UPDATE location SET parent_id = ?, name = ?, code = ?, note = ?, sort_order = ?,
+         grid_rows = ?, grid_cols = ?, updated_at = ? WHERE id = ?`,
+    ).run(parentId, name, code, note, sortOrder, gridRows, gridCols, nowIso(), id);
   } catch (error) {
     if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('同级下已有同名位置');
     throw error;
   }
 
   return getLocation(db, id);
+}
+
+/**
+ * 交换分类盒的行列（8×3 → 3×8），同时把格位坐标一起转置。
+ * 用两段负数中转避免唯一索引在更新途中冲突。
+ */
+export function swapGrid(db, id) {
+  const row = db.prepare('SELECT * FROM location WHERE id = ?').get(id);
+  if (!row) throw ERROR.notFound('位置不存在');
+  if (row.grid_rows == null || row.grid_cols == null) {
+    throw ERROR.validation('该位置不是分类盒，没有行列可以交换');
+  }
+
+  return withTransaction(db, () => {
+    db.prepare(
+      'UPDATE item SET cell_row = -cell_col, cell_col = -cell_row WHERE location_id = ?',
+    ).run(id);
+    db.prepare(
+      'UPDATE item SET cell_row = -cell_row, cell_col = -cell_col WHERE location_id = ?',
+    ).run(id);
+    db.prepare(
+      'UPDATE location SET grid_rows = grid_cols, grid_cols = grid_rows, updated_at = ? WHERE id = ?',
+    ).run(nowIso(), id);
+    return getLocation(db, id);
+  });
 }
 
 /** 删除位置：引用它的物料与子位置会被置空 */

@@ -17,7 +17,7 @@ export async function createFixture(overrides = {}) {
     webDist: path.join(dir, '__no_web_build__'),
     ...overrides,
   });
-  const app = await buildApp(config);
+  const app = await buildApp({ ...config, lcscFetch: overrides.lcscFetch });
   await app.ready();
   return { app, dir, config };
 }

@@ -1,11 +1,24 @@
 <template>
   <div class="page">
     <PageHeader title="库存" :subtitle="`共 ${total} 种物料`">
-      <template v-if="auth.canWrite" #actions>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建物料</el-button>
+      <template #actions>
+        <el-radio-group v-model="view" class="view-switch" size="small">
+          <el-radio-button value="table">表格</el-radio-button>
+          <el-radio-button value="box">盒视图</el-radio-button>
+        </el-radio-group>
+        <el-button v-if="auth.canWrite && view === 'table'" type="primary" :icon="Plus" @click="openCreate">
+          新建物料
+        </el-button>
       </template>
     </PageHeader>
 
+    <BinWall
+      v-if="view === 'box'"
+      :can-write="auth.canWrite"
+      @open-item="openDetail"
+    />
+
+    <template v-else>
     <section class="toolbar card">
       <el-input
         v-model="filters.q"
@@ -61,6 +74,7 @@
         @archive="archiveItem"
         @restore="restoreItem"
         @stock-in="(item) => openMovement(item, 'in')"
+        @stock-out="(item) => openMovement(item, 'out')"
       />
     </div>
 
@@ -105,6 +119,7 @@
         @current-change="load"
       />
     </div>
+    </template>
 
     <ItemDialog
       v-model="dialogVisible"
@@ -126,13 +141,14 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Box, Plus, Refresh, Search } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ItemTable from '@/components/ItemTable.vue';
 import ItemCard from '@/components/ItemCard.vue';
+import BinWall from '@/components/BinWall.vue';
 import ItemDialog from '@/components/ItemDialog.vue';
 import MovementDialog from '@/components/MovementDialog.vue';
 import { useBreakpoint } from '@/composables/useBreakpoint';
@@ -143,6 +159,7 @@ import { api } from '@/api/client';
 const auth = useAuthStore();
 const dictionary = useDictionaryStore();
 const router = useRouter();
+const route = useRoute();
 const { isMobile } = useBreakpoint();
 
 const items = ref([]);
@@ -157,8 +174,14 @@ const movementVisible = ref(false);
 const movementItem = ref(null);
 const movementType = ref('in');
 
+const VIEW_KEY = 'partbin:items-view';
+const view = ref(localStorage.getItem(VIEW_KEY) === 'box' ? 'box' : 'table');
+watch(view, (value) => {
+  localStorage.setItem(VIEW_KEY, value);
+});
+
 const filters = reactive({
-  q: '',
+  q: typeof route.query.q === 'string' ? route.query.q : '',
   categoryId: null,
   locationId: null,
   lowStock: false,
@@ -231,6 +254,17 @@ watch(
   },
 );
 
+watch(
+  () => route.query.q,
+  (value) => {
+    if (typeof value !== 'string') return;
+    if (value === filters.q) return;
+    // 从仪表盘「查看全部」跳过来时，切到表格视图展示完整结果
+    if (value.trim()) view.value = 'table';
+    filters.q = value;
+  },
+);
+
 function resetFilters() {
   filters.q = '';
   filters.categoryId = null;
@@ -253,7 +287,6 @@ function openEdit(item) {
 function openDetail(item) {
   router.push({ name: 'item-detail', params: { id: item.id } });
 }
-
 function openMovement(item, type = 'in') {
   movementItem.value = item;
   movementType.value = type;

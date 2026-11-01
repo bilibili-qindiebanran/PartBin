@@ -5,6 +5,9 @@ function toOptions(nodes) {
   return nodes.map((node) => ({
     value: node.id,
     label: node.name,
+    isGrid: Boolean(node.isGrid),
+    gridRows: node.gridRows ?? null,
+    gridCols: node.gridCols ?? null,
     children: node.children?.length ? toOptions(node.children) : undefined,
   }));
 }

@@ -24,7 +24,7 @@ if (config.host === '0.0.0.0' || config.host === '::') {
 }
 for (const url of urls) app.log.info(`访问地址：${url}`);
 if (config.host === '127.0.0.1') {
-  app.log.info('当前只监听本机：开发用 Vite(5173) 代理；生产由 Caddy 反代 127.0.0.1:8787');
+  app.log.info('当前只监听本机：开发用 Vite(5180) 代理；生产由 Caddy 反代 127.0.0.1:8787');
 }
 
 const userCount = Number(app.db.prepare('SELECT COUNT(*) AS c FROM user').get().c);

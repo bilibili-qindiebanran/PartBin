@@ -17,7 +17,9 @@
     </div>
 
     <p class="item-card__path">
-      {{ item.locationPath || '未指定位置' }} · {{ item.categoryPath || '未分类' }}
+      {{ item.locationPath || '未指定位置' }}
+      <b v-if="item.cellRow" class="cell-chip">{{ cellLabel }}</b>
+      · {{ item.categoryPath || '未分类' }}
     </p>
 
     <div class="item-card__foot">
@@ -34,6 +36,8 @@
         <el-button text size="small" type="primary" @click.stop="emit('stock-in', item)">
           入库
         </el-button>
+        <el-button text size="small" @click.stop="emit('stock-out', item)">出库</el-button>
+        <el-button text size="small" @click.stop="emit('edit', item)">编辑</el-button>
         <el-button
           v-if="item.isArchived"
           text
@@ -51,14 +55,30 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import { Box } from '@element-plus/icons-vue';
 
-defineProps({
+const props = defineProps({
   item: { type: Object, required: true },
   canWrite: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
+const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in', 'stock-out']);
+
+function rowLetter(row) {
+  let value = Number(row);
+  let text = '';
+  while (value > 0) {
+    const rest = (value - 1) % 26;
+    text = String.fromCharCode(65 + rest) + text;
+    value = Math.floor((value - 1) / 26);
+  }
+  return text;
+}
+
+const cellLabel = computed(() =>
+  props.item.cellRow ? `${rowLetter(props.item.cellRow)}${props.item.cellCol}` : '',
+);
 </script>
 
 <style scoped>
@@ -143,11 +163,23 @@ const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
   white-space: nowrap;
 }
 
+.cell-chip {
+  margin: 0 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
 .item-card__foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 8px;
   margin-top: 10px;
   min-height: 26px;
 }
@@ -160,6 +192,12 @@ const emit = defineEmits(['open', 'edit', 'archive', 'restore', 'stock-in']);
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.actions :deep(.el-button + .el-button) {
+  margin-left: 2px;
 }
 </style>

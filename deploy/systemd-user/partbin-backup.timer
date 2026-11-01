@@ -1,0 +1,13 @@
+# PartBin 每日加密备份定时器 —— 用户态单元
+# 安装位置：~/.config/systemd/user/partbin-backup.timer
+
+[Unit]
+Description=Daily PartBin backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

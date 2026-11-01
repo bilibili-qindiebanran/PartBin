@@ -34,6 +34,8 @@ export const ERROR = {
   insufficientStock: (message = '库存不足', details = null) =>
     new AppError('INSUFFICIENT_STOCK', 409, message, details),
   payloadTooLarge: (message = '文件过大') => new AppError('PAYLOAD_TOO_LARGE', 413, message),
+  upstream: (message = '上游服务暂时不可用', details = null) =>
+    new AppError('UPSTREAM_UNAVAILABLE', 502, message, details),
   unsupportedMedia: (message = '不支持的文件类型') =>
     new AppError('UNSUPPORTED_MEDIA', 415, message),
   lastAdmin: () => new AppError('LAST_ADMIN', 409, '至少保留一个启用状态的管理员'),

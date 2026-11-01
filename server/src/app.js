@@ -28,6 +28,9 @@ import loanRoutes from './routes/loans.routes.js';
 import photoRoutes from './routes/photos.routes.js';
 import transferRoutes from './routes/transfer.routes.js';
 import inviteRoutes from './routes/invites.routes.js';
+import binRoutes from './routes/bins.routes.js';
+import lcscRoutes from './routes/lcsc.routes.js';
+import bomRoutes from './routes/bom.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -68,9 +71,12 @@ export async function buildApp(overrides = {}) {
 
   app.decorate('db', db);
   app.decorate('config', config);
+  app.decorate('lcscFetch', overrides.lcscFetch ?? globalThis.fetch);
   app.decorate('limiters', {
     // 注册：同 IP 5 次/小时；登录使用数据库中的持久化失败计数
     registerIp: createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 }),
+    // 立创料号查询：同 IP 30 次/5 分钟，避免被当作外网抓取代理
+    lcsc: createRateLimiter({ limit: 30, windowMs: 5 * 60 * 1000 }),
   });
 
   // 统一安全响应头（CSP、HSTS、COOP/CORP 等）
@@ -180,7 +186,9 @@ export async function buildApp(overrides = {}) {
   await app.register(photoRoutes);
   await app.register(transferRoutes);
   await app.register(inviteRoutes);
-
+  await app.register(binRoutes);
+  await app.register(lcscRoutes);
+  await app.register(bomRoutes);
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
   const hasWebBuild = fs.existsSync(indexHtml);

@@ -103,6 +103,8 @@ import {
   Box,
   Cpu,
   Document,
+  Files,
+  Grid,
   House,
   MoreFilled,
   Setting,
@@ -120,6 +122,8 @@ const router = useRouter();
 const navItems = [
   { to: '/', label: '仪表盘', icon: House },
   { to: '/items', label: '库存', icon: Box },
+  { to: '/bins', label: '元件盒', icon: Grid },
+  { to: '/bom', label: 'BOM', icon: Files },
   { to: '/movements', label: '流水', icon: Tickets },
   { to: '/loans', label: '借出', icon: Document },
   { to: '/settings', label: '设置', icon: Setting },

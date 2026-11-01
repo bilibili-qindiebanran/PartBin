@@ -23,6 +23,7 @@
           <div class="node">
             <span class="node__label">
               {{ data.name }}
+              <small v-if="data.isGrid" class="node__grid">{{ data.gridRows }}×{{ data.gridCols }}</small>
               <small v-if="data.code">{{ data.code }}</small>
             </span>
             <span class="node__actions">
@@ -60,6 +61,43 @@
             maxlength="500"
             placeholder="备注（可选）"
           />
+          <div class="grid-toggle">
+            <el-switch v-model="dialog.gridEnabled" active-text="分类盒（带格位网格）" />
+          </div>
+          <div v-if="dialog.gridEnabled" class="grid-size">
+            <label class="field">
+              <span>行数</span>
+              <el-input-number
+                v-model="dialog.gridRows"
+                :min="1"
+                :max="52"
+                controls-position="right"
+                class="full-control"
+              />
+            </label>
+            <label class="field">
+              <span>列数</span>
+              <el-input-number
+                v-model="dialog.gridCols"
+                :min="1"
+                :max="52"
+                controls-position="right"
+                class="full-control"
+              />
+            </label>
+          </div>
+          <el-button
+            v-if="dialog.gridEnabled"
+            size="small"
+            plain
+            :loading="swapping"
+            @click="swapGrid"
+          >
+            交换行列（已有格位一起转置）
+          </el-button>
+          <p class="hint">
+            分类盒的每个格子放一种元件；关闭开关即为大盒，可混装多种元件袋。
+          </p>
         </template>
       </div>
       <template #footer>
@@ -88,6 +126,7 @@ const base = computed(() => (props.kind === 'categories' ? '/api/categories' : '
 const nodes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const swapping = ref(false);
 const dialog = reactive({
   visible: false,
   mode: 'create',
@@ -97,6 +136,9 @@ const dialog = reactive({
   name: '',
   code: '',
   note: '',
+  gridEnabled: false,
+  gridRows: 3,
+  gridCols: 8,
 });
 
 const dialogTitle = computed(() => {
@@ -123,6 +165,9 @@ function resetDialog() {
   dialog.name = '';
   dialog.code = '';
   dialog.note = '';
+  dialog.gridEnabled = false;
+  dialog.gridRows = 3;
+  dialog.gridCols = 8;
 }
 
 function openCreate(parent) {
@@ -141,7 +186,35 @@ function openEdit(node) {
   dialog.name = node.name;
   dialog.code = node.code ?? '';
   dialog.note = node.note ?? '';
+  dialog.gridEnabled = Boolean(node.isGrid);
+  dialog.gridRows = node.gridRows ?? 3;
+  dialog.gridCols = node.gridCols ?? 8;
   dialog.visible = true;
+}
+
+async function swapGrid() {
+  if (props.kind !== 'locations') return;
+
+  if (!dialog.id) {
+    const rows = dialog.gridRows;
+    dialog.gridRows = dialog.gridCols;
+    dialog.gridCols = rows;
+    return;
+  }
+
+  swapping.value = true;
+  try {
+    const data = await api(`${base.value}/${dialog.id}/swap-grid`, { method: 'POST' });
+    dialog.gridRows = data.location.gridRows;
+    dialog.gridCols = data.location.gridCols;
+    ElMessage.success('已交换行列，格位坐标一起转置');
+    await load();
+    await dictionary.refresh();
+  } catch (error) {
+    ElMessage.error(error.message || '交换失败');
+  } finally {
+    swapping.value = false;
+  }
 }
 
 async function submit() {
@@ -155,6 +228,8 @@ async function submit() {
   if (props.kind === 'locations') {
     payload.code = dialog.code.trim() || null;
     payload.note = dialog.note.trim() || null;
+    payload.gridRows = dialog.gridEnabled ? dialog.gridRows : null;
+    payload.gridCols = dialog.gridEnabled ? dialog.gridCols : null;
   }
 
   saving.value = true;
@@ -249,6 +324,45 @@ onMounted(load);
   margin-left: 6px;
   color: var(--ink-400);
   font-size: 11px;
+}
+
+.node__grid {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(10, 122, 122, 0.1);
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.grid-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.grid-size {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.grid-size .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-600);
+  font-size: 12px;
+}
+
+.full-control {
+  width: 100%;
+}
+
+.hint {
+  margin: 0;
+  color: var(--ink-400);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .node__actions {

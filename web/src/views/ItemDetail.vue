@@ -69,11 +69,26 @@
             </div>
             <div>
               <dt>位置</dt>
-              <dd>{{ item.locationPath || '未指定' }}</dd>
+              <dd>
+                {{ item.locationPath || '未指定' }}
+                <span v-if="item.cellRow" class="cell-chip">{{ cellLabel }}</span>
+              </dd>
             </div>
             <div>
               <dt>编号</dt>
               <dd>{{ item.code || '—' }}</dd>
+            </div>
+            <div>
+              <dt>立创料号</dt>
+              <dd>
+                <a
+                  v-if="item.lcscCode"
+                  :href="`https://www.lcsc.com/product-detail/${item.lcscCode}.html`"
+                  target="_blank"
+                  rel="noreferrer"
+                >{{ item.lcscCode }}</a>
+                <span v-else>—</span>
+              </dd>
             </div>
             <div>
               <dt>厂商</dt>
@@ -82,6 +97,14 @@
             <div>
               <dt>型号</dt>
               <dd>{{ item.model || '—' }}</dd>
+            </div>
+            <div>
+              <dt>封装</dt>
+              <dd>{{ item.package || '—' }}</dd>
+            </div>
+            <div>
+              <dt>耐压</dt>
+              <dd>{{ item.voltage || '—' }}</dd>
             </div>
             <div>
               <dt>规格</dt>
@@ -371,6 +394,21 @@ const subtitle = computed(() => {
   const parts = [item.value?.model, item.value?.code, item.value?.manufacturer].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : '—';
 });
+
+function rowLetter(row) {
+  let value = Number(row);
+  let text = '';
+  while (value > 0) {
+    const rest = (value - 1) % 26;
+    text = String.fromCharCode(65 + rest) + text;
+    value = Math.floor((value - 1) / 26);
+  }
+  return text;
+}
+
+const cellLabel = computed(() =>
+  item.value?.cellRow ? `格位 ${rowLetter(item.value.cellRow)}${item.value.cellCol}` : '',
+);
 
 async function load() {
   loading.value = true;
@@ -724,6 +762,17 @@ onMounted(async () => {
   text-align: right;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.cell-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(10, 122, 122, 0.1);
+  color: var(--primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .note {

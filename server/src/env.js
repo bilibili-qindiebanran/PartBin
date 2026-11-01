@@ -19,7 +19,8 @@ function toBool(value, fallback) {
  * @returns {{
  *   nodeEnv: string, host: string, port: number, dataDir: string,
  *   sessionDays: number, cookieSecure: boolean, trustProxy: boolean,
- *   appTz: string, logLevel: string, backupKeep: number, webDist: string
+ *   appTz: string, logLevel: string, backupKeep: number, webDist: string,
+ *   lcscApiBase: string, lcscTimeoutMs: number, lcscCacheDays: number
  * }}
  */
 const DEV_SECRET = 'dev-only-secret-change-me-32-bytes-min';
@@ -59,5 +60,12 @@ export function loadConfig(overrides = {}) {
     logLevel: overrides.logLevel ?? process.env.LOG_LEVEL ?? 'info',
     backupKeep: toInt(overrides.backupKeep ?? process.env.BACKUP_KEEP, 14),
     webDist: overrides.webDist ?? process.env.WEB_DIST ?? path.join(ROOT_DIR, 'web', 'dist'),
+
+    // 立创料号匹配：默认走 JLCPCB 公开元件接口；可用 LCSC_API_BASE 指向自建代理
+    lcscApiBase: String(
+      overrides.lcscApiBase ?? process.env.LCSC_API_BASE ?? '',
+    ).trim(),
+    lcscTimeoutMs: toInt(overrides.lcscTimeoutMs ?? process.env.LCSC_TIMEOUT_MS, 8000),
+    lcscCacheDays: toInt(overrides.lcscCacheDays ?? process.env.LCSC_CACHE_DAYS, 7),
   };
 }

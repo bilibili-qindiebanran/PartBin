@@ -6,6 +6,9 @@ import { loadConfig } from '../src/env.js';
 import { migrate } from '../src/db/migrate.js';
 import { createFixture, destroyFixture } from './helpers.js';
 
+/** 当前迁移文件数（001–006）；新增迁移时同步 +1 */
+const MIGRATION_COUNT = 6;
+
 describe('数据库迁移', () => {
   it('首次启动建表并记录版本', async () => {
     const ctx = await createFixture();
@@ -39,7 +42,7 @@ describe('数据库迁移', () => {
       const applied = Number(
         ctx.app.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c,
       );
-      expect(applied).toBe(3);
+      expect(applied).toBe(MIGRATION_COUNT);
 
       const settings = ctx.app.db.prepare('SELECT key, value FROM setting').all();
       expect(settings).toEqual(
@@ -72,7 +75,7 @@ describe('数据库迁移', () => {
       const applied = Number(
         second.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c,
       );
-      expect(applied).toBe(3);
+      expect(applied).toBe(MIGRATION_COUNT);
     } finally {
       await second.close();
       await rm(dir, { recursive: true, force: true });
@@ -95,7 +98,7 @@ describe('数据库迁移', () => {
       expect(row.value).toBe('PartBin');
       expect(
         Number(ctx.app.db.prepare('SELECT COUNT(*) AS c FROM schema_migration').get().c),
-      ).toBe(3);
+      ).toBe(MIGRATION_COUNT);
     } finally {
       await destroyFixture(ctx);
     }

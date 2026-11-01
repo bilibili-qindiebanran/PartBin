@@ -2,6 +2,7 @@ import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { buildPathMap, descendantIds } from '../lib/tree.js';
 import { nowIso } from '../lib/time.js';
+import { normalizeLcscCode, lookupLcsc, lcscToItemFields } from './lcsc.js';
 import {
   optionalDate,
   optionalId,
@@ -16,10 +17,12 @@ import {
 
 const ITEM_SELECT = `
   SELECT i.*,
+    l.grid_rows AS location_grid_rows,
+    l.grid_cols AS location_grid_cols,
     COALESCE((
-      SELECT SUM(l.quantity - l.returned_quantity)
-      FROM loan l
-      WHERE l.item_id = i.id AND l.returned_quantity < l.quantity
+      SELECT SUM(l2.quantity - l2.returned_quantity)
+      FROM loan l2
+      WHERE l2.item_id = i.id AND l2.returned_quantity < l2.quantity
     ), 0) AS lent_quantity,
     (
       SELECT COUNT(*) FROM item_instance ii
@@ -32,6 +35,7 @@ const ITEM_SELECT = `
       LIMIT 1
     ) AS cover_photo_id
   FROM item i
+  LEFT JOIN location l ON l.id = i.location_id
 `;
 
 const SORT_COLUMNS = {
@@ -64,6 +68,47 @@ function ensureRef(db, table, id, label) {
   return id;
 }
 
+/**
+ * 校验格位：两者必须同时给或同时为空，且落在所属分类盒的网格内。
+ * @returns {{ cellRow: number|null, cellCol: number|null }}
+ */
+function resolveCell(db, locationId, cellRow, cellCol) {
+  if (cellRow == null && cellCol == null) return { cellRow: null, cellCol: null };
+  if (cellRow == null || cellCol == null) {
+    throw ERROR.validation('格位需要同时指定行与列');
+  }
+  if (locationId == null) {
+    throw ERROR.validation('指定格位前请先选择位置');
+  }
+
+  const location = db.prepare('SELECT * FROM location WHERE id = ?').get(locationId);
+  if (!location) throw ERROR.validation('位置不存在');
+  if (location.grid_rows == null || location.grid_cols == null) {
+    throw ERROR.validation('该位置不是分类盒，不支持格位');
+  }
+  if (cellRow > Number(location.grid_rows) || cellCol > Number(location.grid_cols)) {
+    throw ERROR.validation(
+      `格位超出范围：该盒为 ${location.grid_rows} 行 × ${location.grid_cols} 列`,
+    );
+  }
+  return { cellRow, cellCol };
+}
+
+function parseCell(input) {
+  return {
+    cellRow: optionalInt(input.cellRow, '格位行', { min: 1, max: 52 }),
+    cellCol: optionalInt(input.cellCol, '格位列', { min: 1, max: 52 }),
+  };
+}
+
+/** 可空立创料号：空值返回 null，否则归一化为 Cxxxx */
+function normalizeOptionalLcsc(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (text === '') return null;
+  return normalizeLcscCode(text);
+}
+
 function toCents(value) {
   const price = optionalNumber(value, '价格', { min: 0, max: 1e9 });
   return price == null ? null : Math.round(price * 100);
@@ -84,9 +129,19 @@ function toPublicItem(row, taxonomies) {
     categoryPath: categoryId ? (taxonomies.categoryPaths.get(categoryId) ?? null) : null,
     locationId,
     locationPath: locationId ? (taxonomies.locationPaths.get(locationId) ?? null) : null,
+    locationGridRows:
+      row.location_grid_rows == null ? null : Number(row.location_grid_rows),
+    locationGridCols:
+      row.location_grid_cols == null ? null : Number(row.location_grid_cols),
+    cellRow: row.cell_row == null ? null : Number(row.cell_row),
+    cellCol: row.cell_col == null ? null : Number(row.cell_col),
+    lcscCode: row.lcsc_code ?? null,
+    lcscMatchedAt: row.lcsc_matched_at ?? null,
     manufacturer: row.manufacturer ?? null,
     model: row.model ?? null,
     spec: row.spec ?? null,
+    package: row.package ?? null,
+    voltage: row.voltage ?? null,
     unit: row.unit,
     trackingMode: row.tracking_mode,
     quantity,
@@ -126,9 +181,9 @@ export function listItems(db, query = {}) {
     for (const token of tokens) {
       const like = `%${token.replace(/[\\%_]/g, '\\$&')}%`;
       where.push(
-        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\')`,
+        `(i.name LIKE ? ESCAPE '\\' OR i.model LIKE ? ESCAPE '\\' OR i.spec LIKE ? ESCAPE '\\' OR i.code LIKE ? ESCAPE '\\' OR i.lcsc_code LIKE ? ESCAPE '\\' OR i.package LIKE ? ESCAPE '\\')`,
       );
-      params.push(like, like, like, like);
+      params.push(like, like, like, like, like, like);
     }
   }
 
@@ -220,15 +275,26 @@ export function createItem(db, input = {}, userId) {
     const manufacturer = optionalString(input.manufacturer, '厂商', { max: 120 });
     const model = optionalString(input.model, '型号', { max: 120 });
     const spec = optionalString(input.spec, '规格', { max: 2000 });
+    const packageName = optionalString(input.package, '封装', { max: 60 });
+    const voltage = optionalString(input.voltage, '耐压', { max: 40 });
     const unit = optionalString(input.unit, '单位', { max: 10 }) ?? '个';
     const trackingMode =
       input.trackingMode == null
         ? 'quantity'
         : requireEnum(input.trackingMode, '追踪模式', ['quantity', 'instance']);
     const minQuantity = optionalInt(input.minQuantity, '低库存阈值', { min: 0, max: 1000000 }) ?? 0;
+    const parsedCell = parseCell(input);
+    const { cellRow, cellCol } = resolveCell(
+      db,
+      locationId,
+      parsedCell.cellRow,
+      parsedCell.cellCol,
+    );
     const priceCents = toCents(input.price);
     const purchaseDate = optionalDate(input.purchaseDate, '购买日期');
     const note = optionalString(input.note, '备注', { max: 2000 });
+    const lcscCode = normalizeOptionalLcsc(input.lcscCode);
+    const lcscMatchedAt = lcscCode && input.lcscMatched === true ? nowIso() : null;
 
     let quantity = 0;
     if (trackingMode === 'quantity') {
@@ -243,19 +309,24 @@ export function createItem(db, input = {}, userId) {
       inserted = db
         .prepare(
           `INSERT INTO item (
-             code, name, category_id, location_id, manufacturer, model, spec, unit,
-             tracking_mode, quantity, min_quantity, price_cents, purchase_date, note,
+             code, name, category_id, location_id, cell_row, cell_col, manufacturer, model, spec,
+             package, voltage, unit,
+             tracking_mode, quantity, min_quantity, price_cents, purchase_date, note, lcsc_code, lcsc_matched_at,
              created_by, updated_by, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           code,
           name,
           categoryId,
           locationId,
+          cellRow,
+          cellCol,
           manufacturer,
           model,
           spec,
+          packageName,
+          voltage,
           unit,
           trackingMode,
           quantity,
@@ -263,13 +334,20 @@ export function createItem(db, input = {}, userId) {
           priceCents,
           purchaseDate,
           note,
+          lcscCode,
+          lcscMatchedAt,
           userId,
           userId,
           now,
           now,
         );
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('物料编号已存在');
+      if (String(error.message).includes('UNIQUE')) {
+        if (String(error.message).includes('item.location_id')) {
+          throw ERROR.duplicate('该格位已被其他物料占用');
+        }
+        throw ERROR.duplicate('物料编号已存在');
+      }
       throw error;
     }
 
@@ -311,17 +389,38 @@ export function updateItem(db, id, input = {}, userId) {
         ensureRef(db, 'category', optionalId(input.categoryId, '分类'), '分类'),
       );
     }
+    const nextLocationId = has(input, 'locationId')
+      ? ensureRef(db, 'location', optionalId(input.locationId, '位置'), '位置')
+      : current.location_id == null
+        ? null
+        : Number(current.location_id);
     if (has(input, 'locationId')) {
-      assign(
-        'location_id',
-        ensureRef(db, 'location', optionalId(input.locationId, '位置'), '位置'),
-      );
+      assign('location_id', nextLocationId);
     }
+
+    const cellTouched = has(input, 'cellRow') || has(input, 'cellCol');
+    if (cellTouched) {
+      const { cellRow, cellCol } = parseCell(input);
+      const cell = resolveCell(db, nextLocationId, cellRow, cellCol);
+      assign('cell_row', cell.cellRow);
+      assign('cell_col', cell.cellCol);
+    } else if (nextLocationId !== (current.location_id == null ? null : Number(current.location_id))) {
+      // 换到新位置后旧格位失效，避免出现越界格位
+      assign('cell_row', null);
+      assign('cell_col', null);
+    }
+
     if (has(input, 'manufacturer')) {
       assign('manufacturer', optionalString(input.manufacturer, '厂商', { max: 120 }));
     }
     if (has(input, 'model')) assign('model', optionalString(input.model, '型号', { max: 120 }));
     if (has(input, 'spec')) assign('spec', optionalString(input.spec, '规格', { max: 2000 }));
+    if (has(input, 'package')) {
+      assign('package', optionalString(input.package, '封装', { max: 60 }));
+    }
+    if (has(input, 'voltage')) {
+      assign('voltage', optionalString(input.voltage, '耐压', { max: 40 }));
+    }
     if (has(input, 'unit')) assign('unit', requireString(input.unit, '单位', { min: 1, max: 10 }));
     if (has(input, 'minQuantity')) {
       assign('min_quantity', requireInt(input.minQuantity, '低库存阈值', { min: 0, max: 1000000 }));
@@ -334,6 +433,12 @@ export function updateItem(db, id, input = {}, userId) {
       assign('purchase_date', optionalDate(input.purchaseDate, '购买日期'));
     }
     if (has(input, 'note')) assign('note', optionalString(input.note, '备注', { max: 2000 }));
+
+    if (has(input, 'lcscCode')) {
+      const lcscCode = normalizeOptionalLcsc(input.lcscCode);
+      assign('lcsc_code', lcscCode);
+      assign('lcsc_matched_at', lcscCode && input.lcscMatched === true ? nowIso() : null);
+    }
 
     if (has(input, 'trackingMode')) {
       const mode = requireEnum(input.trackingMode, '追踪模式', ['quantity', 'instance']);
@@ -360,7 +465,12 @@ export function updateItem(db, id, input = {}, userId) {
     try {
       db.prepare(`UPDATE item SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw ERROR.duplicate('物料编号已存在');
+      if (String(error.message).includes('UNIQUE')) {
+        if (String(error.message).includes('item.location_id')) {
+          throw ERROR.duplicate('该格位已被其他物料占用');
+        }
+        throw ERROR.duplicate('物料编号已存在');
+      }
       throw error;
     }
 
@@ -368,9 +478,31 @@ export function updateItem(db, id, input = {}, userId) {
   });
 }
 
+/**
+ * 用立创料号匹配并补全物料信息（只填空字段）。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} id
+ * @param {{ code?: string, userId?: number|null } & Record<string, unknown>} [options]
+ */
+export async function matchItemLcsc(db, id, options = {}) {
+  const item = getItem(db, id);
+  const code = options.code ?? item.lcscCode;
+  if (!code) throw ERROR.validation('请先填写立创料号');
+
+  const result = await lookupLcsc(db, code, options);
+  const fields = lcscToItemFields(result.part, item);
+  const updated = updateItem(
+    db,
+    id,
+    { ...fields, lcscCode: result.part.code, lcscMatched: true },
+    options.userId ?? null,
+  );
+
+  return { item: updated, part: result.part, cached: result.cached };
+}
+
 /** 归档 / 恢复 */
-export function setItemArchived(db, id, archived, userId) {
-  const row = getRow(db, id);
+export function setItemArchived(db, id, archived, userId) {  const row = getRow(db, id);
   if (!row) throw ERROR.notFound('物料不存在');
 
   db.prepare('UPDATE item SET is_archived = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(
