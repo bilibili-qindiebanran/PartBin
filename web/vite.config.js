@@ -18,6 +18,9 @@ export default defineConfig({
     },
   },
   server: {
+    // 监听所有网卡：同一局域网用 http://<本机IP>:5180 调试手机端。
+    // API 仍由本进程代理到 127.0.0.1:8787，不需要把 8787 暴露出去。
+    host: true,
     port: 5180,
     strictPort: true,
     proxy: {

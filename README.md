@@ -80,6 +80,15 @@ pnpm dev
 
 `pnpm dev` 会同时启动 Vite 与 API；Vite 把 `/api`、`/health` 代理到 8787。
 
+Vite 监听所有网卡（`host: true`），同一局域网内手机可直接访问 `http://<本机IP>:5180`；
+API 由 Vite 代理回 `127.0.0.1:8787`，**不需要**把 8787 暴露到局域网。
+
+> ⚠️ 浏览器只在安全上下文（HTTPS 或 `localhost`）允许调用摄像头。用 `http://192.168.x.x:5180`
+> 打开时，「快速入库」的扫码会自动退到「手动输入料号」，这是预期行为。
+> 想在真机上测扫码：桌面 Chrome 可加
+> `--unsafely-treat-insecure-origin-as-secure=http://<本机IP>:5180`（需配独立 `--user-data-dir`），
+> 或改用 HTTPS（自签证书 / Cloudflare Tunnel）。
+
 ---
 
 ## 生产部署一：Docker Compose
