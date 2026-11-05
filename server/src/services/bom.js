@@ -1,12 +1,14 @@
+import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { buildPathMap } from '../lib/tree.js';
 import { isZipBuffer, readXlsxRows } from '../lib/xlsx.js';
 import { loadAliasMap } from './bom-alias.js';
+import { applyMovement } from './movements.js';
 import { parseCsv } from './transfer.js';
 
 /**
  * BOM 匹配：把 BOM 的每一行对应到本地物料，算出需求、库存、缺口与可支持套数。
- * 只读操作，不写任何流水。
+ * 匹配与覆盖重算只读；仅 consumeBom（按套数扣料）会写库存与流水。
  */
 
 const HEADER_ALIASES = {
@@ -757,6 +759,12 @@ function normalizeText(value) {
     .replace(/\s+/g, ' ');
 }
 
+/** 可选的自由文本（备注、批次名）：去首尾空白，超长截断 */
+function optionalNoteText(value, max = 120) {
+  const text = String(value ?? '').trim();
+  return text ? text.slice(0, max) : null;
+}
+
 /** 分层的匹配键：料号 > 厂家料号 > 值+封装族 > 名称；人工对应按此顺序查 */
 function matchKeysOf(group) {
   const keys = [];
@@ -1009,19 +1017,17 @@ export function matchBom(db, input = {}) {
 }
 
 /**
- * 用回传的分组 + 人工覆盖重新计算（不重新解析文件）。
- * @param {import('node:sqlite').DatabaseSync} db
+ * 校验并归一前端回传的分组（不重新解析文件）。
  * @param {unknown} groups
- * @param {{ sets?: unknown, options?: unknown, overrides?: unknown }} input
  */
-export function rematchGroups(db, groups, input = {}) {
+function normalizeGroupsInput(groups) {
   if (!Array.isArray(groups)) throw ERROR.validation('缺少 BOM 分组数据');
   if (groups.length === 0) throw ERROR.validation('BOM 分组为空');
   if (groups.length > MAX_ROWS) {
     throw ERROR.payloadTooLarge(`BOM 分组超过 ${MAX_ROWS} 组，请拆分后再导入`);
   }
 
-  const normalized = groups.map((group, index) => {
+  return groups.map((group, index) => {
     if (!group || typeof group !== 'object') {
       throw ERROR.validation(`第 ${index + 1} 个分组格式不正确`);
     }
@@ -1052,8 +1058,166 @@ export function rematchGroups(db, groups, input = {}) {
       valueKeys: valueKeysOf(name, pkg),
     };
   });
+}
 
-  return matchGroups(db, normalized, input);
+/**
+ * 用回传的分组 + 人工覆盖重新计算（不重新解析文件）。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown} groups
+ * @param {{ sets?: unknown, options?: unknown, overrides?: unknown }} input
+ */
+export function rematchGroups(db, groups, input = {}) {
+  return matchGroups(db, normalizeGroupsInput(groups), input);
+}
+
+// ---------------------------------------------------------------------------
+// BOM 生产扣料
+// ---------------------------------------------------------------------------
+
+/**
+ * 按当前匹配结果扣减库存（出库流水，type=out）。
+ *
+ * 规则：
+ * - 只处理已匹配 / 部分匹配且有 itemId 的行；缺失、有歧义的行跳过
+ * - 扣减量 = 单板用量 × 套数（沿用报告里的 demand）
+ * - 多行映射到同一物料时合并成一次扣减，避免同一次操作被拆成多条流水
+ * - 全部成功或全部失败：任一物料库存不足、或是实例制物料，整体回滚并返回明细
+ * - 扣减后重新匹配，返回最新报告，前端可直接刷新库存与缺口
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown} groups
+ * @param {{
+ *   sets?: unknown, options?: unknown, overrides?: unknown,
+ *   note?: unknown, label?: unknown, userId: number
+ * }} input
+ */
+export function consumeBom(db, groups, input = {}) {
+  const normalized = normalizeGroupsInput(groups);
+  const preview = matchGroups(db, normalized, input);
+
+  const label = optionalNoteText(input.label) ?? optionalNoteText(input.note);
+
+  // 合并同一物料的扣减量
+  const planned = new Map();
+  let skipped = 0;
+  for (const row of preview.groups) {
+    if (!row.itemId || (row.status !== 'matched' && row.status !== 'partial')) {
+      skipped += 1;
+      continue;
+    }
+    const demand = Number(row.demand);
+    if (!Number.isFinite(demand) || demand <= 0) {
+      skipped += 1;
+      continue;
+    }
+
+    const itemId = Number(row.itemId);
+    const existing = planned.get(itemId);
+    if (existing) {
+      existing.quantity += demand;
+    } else {
+      planned.set(itemId, {
+        itemId,
+        quantity: demand,
+        unit: row.unit ?? '个',
+        name: row.itemName || row.name || `#${itemId}`,
+      });
+    }
+  }
+
+  if (planned.size === 0) {
+    throw ERROR.validation('没有可扣减的物料，请先完成匹配或指定物料');
+  }
+
+  // 预检查：库存与跟踪模式，任一不满足则整体拒绝
+  const problems = [];
+  for (const plan of planned.values()) {
+    const row = db
+      .prepare(
+        `SELECT i.id, i.name, i.quantity, i.unit, i.tracking_mode,
+                COALESCE((
+                  SELECT SUM(l.quantity - l.returned_quantity) FROM loan l
+                  WHERE l.item_id = i.id AND l.returned_quantity < l.quantity
+                ), 0) AS lent_quantity
+         FROM item i WHERE i.id = ?`,
+      )
+      .get(plan.itemId);
+    if (!row) {
+      problems.push({ itemId: plan.itemId, name: plan.name, reason: '物料不存在' });
+      continue;
+    }
+    plan.name = row.name;
+    plan.unit = row.unit ?? '个';
+
+    if (row.tracking_mode === 'instance') {
+      problems.push({
+        itemId: plan.itemId,
+        name: row.name,
+        reason: '实例制物料，请到物料详情逐个出库',
+      });
+      continue;
+    }
+
+    const available = Math.max(0, Number(row.quantity) - Number(row.lent_quantity ?? 0));
+    plan.available = available;
+    if (available < plan.quantity) {
+      problems.push({
+        itemId: plan.itemId,
+        name: row.name,
+        reason: `库存不足：可用 ${available} ${row.unit}，需要 ${plan.quantity} ${row.unit}`,
+      });
+    }
+  }
+
+  if (problems.length > 0) {
+    throw ERROR.insufficientStock(
+      `${problems.length} 项物料无法扣减，库存未发生变化`,
+      { problems: problems.slice(0, 20), total: problems.length },
+    );
+  }
+
+  const sets = preview.summary.sets;
+  const noteParts = ['BOM 生产扣料'];
+  if (sets) noteParts.push(`${sets} 套`);
+  if (label) noteParts.push(label);
+  const note = noteParts.join(' · ').slice(0, 500);
+
+  const movements = withTransaction(db, () => {
+    const written = [];
+    for (const plan of planned.values()) {
+      const result = applyMovement(db, {
+        itemId: plan.itemId,
+        type: 'out',
+        quantity: plan.quantity,
+        note,
+        userId: input.userId,
+      });
+      written.push({
+        itemId: plan.itemId,
+        name: plan.name,
+        quantity: plan.quantity,
+        unit: plan.unit,
+        balanceAfter: result.item.quantity,
+      });
+    }
+    return written;
+  });
+
+  // 扣减后重算，前端直接用新库存/缺口刷新表格
+  const report = matchGroups(db, normalized, input);
+
+  return {
+    ...report,
+    consumed: movements,
+    // 不用 summary：那是 matchGroups 的匹配汇总，键名会冲突
+    deduction: {
+      items: movements.length,
+      totalQuantity: movements.reduce((sum, row) => sum + row.quantity, 0),
+      skipped,
+      sets: sets ?? null,
+      note,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -100,8 +100,36 @@
       <section class="card panel">
         <div class="panel__head">
           <h3>明细</h3>
-          <el-checkbox v-model="onlyProblems">只看缺失 / 缺料</el-checkbox>
+          <div class="panel__actions">
+            <el-checkbox v-model="onlyProblems">只看缺失 / 缺料</el-checkbox>
+            <el-tooltip
+              :disabled="consumeHint === null"
+              :content="consumeHint"
+              placement="top"
+            >
+              <span>
+                <el-button
+                  type="primary"
+                  :icon="Minus"
+                  :loading="consuming"
+                  :disabled="consumeHint !== null"
+                  @click="confirmConsume"
+                >
+                  扣减库存
+                </el-button>
+              </span>
+            </el-tooltip>
+          </div>
         </div>
+
+        <el-alert
+          v-if="consumed"
+          class="panel__alert"
+          type="success"
+          :closable="false"
+          show-icon
+          title="库存已按本次套数扣减；重新匹配后可以再次扣减"
+        />
 
         <el-alert
           v-if="aliasCount > 0"
@@ -265,18 +293,23 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
-import { Download, Files, Grid, Link, UploadFilled } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { Download, Files, Grid, Link, Minus, UploadFilled } from '@element-plus/icons-vue';
 import PageHeader from '@/components/PageHeader.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import { api, apiUpload } from '@/api/client';
+import { useAuthStore } from '@/stores/auth';
 
 const uploadRef = ref(null);
 const router = useRouter();
+const auth = useAuthStore();
 const file = ref(null);
 const sets = ref(1);
 const loading = ref(false);
 const applying = ref(false);
+const consuming = ref(false);
+/** 本次报告是否已经扣过库存，防止重复点击 */
+const consumed = ref(false);
 const report = ref(null);
 const onlyProblems = ref(false);
 const aliasCount = ref(0);
@@ -331,9 +364,110 @@ const visibleGroups = computed(() => {
   );
 });
 
+/** 本次会被扣减的行：已匹配 / 部分匹配且有物料 */
+const deductibleRows = computed(() => {
+  if (!report.value) return [];
+  return report.value.groups.filter(
+    (row) => row.itemId && (row.status === 'matched' || row.status === 'partial') && row.demand > 0,
+  );
+});
+
+const deductiblePieces = computed(() =>
+  deductibleRows.value.reduce((sum, row) => sum + Number(row.demand ?? 0), 0),
+);
+
+const partialCount = computed(
+  () => deductibleRows.value.filter((row) => row.status === 'partial').length,
+);
+
+/** null 表示可以点击；非 null 时作为按钮禁用原因提示 */
+const consumeHint = computed(() => {
+  if (!auth.canWrite) return '只读账号不能扣减库存';
+  if (!report.value) return '请先匹配 BOM';
+  if (consumed.value) return '本次已扣减，重新匹配后可再次扣减';
+  if (deductibleRows.value.length === 0) return '没有可扣减的已匹配物料';
+  return null;
+});
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch],
+  );
+}
+
+/** 按生产套数扣减已匹配库存：先确认，再一次事务内出库 */
+async function confirmConsume() {
+  if (!report.value || consumeHint.value !== null) return;
+
+  const usedSets = report.value.summary.sets ?? sets.value;
+  const skipped = report.value.groups.length - deductibleRows.value.length;
+  const lines = [
+    `将按 <b>${usedSets}</b> 套扣减 <b>${deductibleRows.value.length}</b> 种物料，共 <b>${deductiblePieces.value}</b> 件。`,
+    '每种物料会写一条出库流水，备注为「BOM 生产扣料」。',
+  ];
+  if (partialCount.value > 0) {
+    lines.push(`其中 ${partialCount.value} 项为部分匹配（参数有差异），也会一并扣减。`);
+  }
+  if (skipped > 0) {
+    lines.push(`${skipped} 项未匹配 / 有歧义的物料会被跳过。`);
+  }
+  lines.push('<br />库存不足时整次操作不会生效，库存保持不变。');
+
+  try {
+    await ElMessageBox.confirm(lines.join('<br />'), '确认扣减库存', {
+      confirmButtonText: '确认扣减',
+      cancelButtonText: '取消',
+      type: 'warning',
+      dangerouslyUseHTMLString: true,
+    });
+  } catch {
+    return;
+  }
+
+  consuming.value = true;
+  try {
+    const result = await api('/api/bom/consume', {
+      method: 'POST',
+      body: {
+        sets: usedSets,
+        options: { ...options },
+        groups: report.value.groups,
+        overrides: Object.entries(overrides).map(([key, value]) => ({ key, ...value })),
+        note: file.value?.name ?? null,
+      },
+    });
+    report.value = result;
+    consumed.value = true;
+    ElMessage.success(
+      `已扣减 ${result.deduction.items} 种物料，共 ${result.deduction.totalQuantity} 件`,
+    );
+  } catch (error) {
+    const problems = error.details?.problems;
+    if (Array.isArray(problems) && problems.length > 0) {
+      const rows = problems
+        .map((item) => `<li>${escapeHtml(item.name)}：${escapeHtml(item.reason)}</li>`)
+        .join('');
+      const more =
+        error.details.total > problems.length
+          ? `<p>另有 ${error.details.total - problems.length} 项未列出。</p>`
+          : '';
+      ElMessageBox.alert(
+        `<p>库存没有变化。请先补料或调整套数后再试。</p><ul style="padding-left:18px">${rows}</ul>${more}`,
+        '无法扣减',
+        { type: 'error', dangerouslyUseHTMLString: true },
+      ).catch(() => {});
+    } else {
+      ElMessage.error(error.message || '扣减失败');
+    }
+  } finally {
+    consuming.value = false;
+  }
+}
+
 function handleFile(uploadFile) {
   file.value = uploadFile.raw ?? null;
   report.value = null;
+  consumed.value = false;
 }
 
 function handleRemove() {
@@ -352,6 +486,7 @@ async function runMatch() {
   loading.value = true;
   try {
     for (const key of Object.keys(overrides)) delete overrides[key];
+    consumed.value = false;
 
     const formData = new FormData();
     formData.append('file', file.value, file.value.name);
@@ -647,6 +782,13 @@ function exportCsv() {
 .panel__head h3 {
   font-size: 14px;
   font-weight: 600;
+}
+
+.panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
 }
 
 .cell-main {

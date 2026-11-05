@@ -1,5 +1,11 @@
 import { ERROR } from '../lib/errors.js';
-import { matchBom, rematchGroups, resolveOptions, kindOfKey } from '../services/bom.js';
+import {
+  consumeBom,
+  kindOfKey,
+  matchBom,
+  rematchGroups,
+  resolveOptions,
+} from '../services/bom.js';
 import {
   deleteAlias,
   deleteAliasByKey,
@@ -94,6 +100,44 @@ export default async function bomRoutes(app) {
     defaults: resolveOptions(null),
     tolerances: ['strict', 'family', 'ignore'],
   }));
+
+  /**
+   * 生产扣料：按当前匹配结果 + 套数扣减库存（出库流水）。
+   * 全部成功或全部失败；失败时返回明细，库存不变。
+   */
+  app.post('/api/bom/consume', { preHandler: app.requireAdmin }, async (request) => {
+    const groups = request.body?.groups;
+    if (Array.isArray(groups) && groups.length > MAX_GROUPS) {
+      throw ERROR.payloadTooLarge(`BOM 分组超过 ${MAX_GROUPS} 组，请拆分后再处理`);
+    }
+
+    enforce(app.limiters.bomConsume, String(request.user.id));
+
+    const result = consumeBom(db, groups, {
+      sets: request.body?.sets,
+      options: request.body?.options,
+      overrides: request.body?.overrides,
+      label: request.body?.note,
+      userId: request.user.id,
+    });
+
+    recordAudit(db, {
+      actorId: request.user.id,
+      action: 'bom.consume',
+      targetType: 'bom',
+      targetId: null,
+      detail: {
+        sets: result.deduction.sets,
+        items: result.deduction.items,
+        totalQuantity: result.deduction.totalQuantity,
+        skipped: result.deduction.skipped,
+        itemIds: result.consumed.slice(0, 50).map((row) => row.itemId),
+      },
+      ipHash: request.ipHash,
+    });
+
+    return result;
+  });
 
   /** 已记住的人工对应关系 */
   app.get('/api/bom/aliases', { preHandler: app.authenticate }, async () => ({

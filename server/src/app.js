@@ -80,6 +80,8 @@ export async function buildApp(overrides = {}) {
     lcsc: createRateLimiter({ limit: 30, windowMs: 5 * 60 * 1000 }),
     // BOM 人工对应关系：同管理员 60 次/5 分钟，防脚本批量灌入
     bomAlias: createRateLimiter({ limit: 60, windowMs: 5 * 60 * 1000 }),
+    // BOM 生产扣料：同管理员 20 次/5 分钟，扣库存属于低频重操作
+    bomConsume: createRateLimiter({ limit: 20, windowMs: 5 * 60 * 1000 }),
     // EDA 插件查料：同 IP 120 次/分钟（插件一次请求最多 500 条，按 500 分片）
     eda: createRateLimiter({ limit: 120, windowMs: 60 * 1000 }),
   });
