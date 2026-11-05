@@ -379,6 +379,71 @@ describe('BOM 匹配', () => {
     expect(body.groups[0].matchedBy).toBe('model');
   });
 
+  it('Comment 直接写型号、Manufacturer Part 为空时也能命中库内型号', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Qxx 16MB flash',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+      package: 'SOP-8',
+    });
+
+    // 立创 EDA 导出：Comment=型号名，Value 与 Manufacturer Part 都为空
+    const csv = [
+      'No.,Quantity,Comment,Designator,Footprint,Value,Manufacturer Part',
+      '4,1,W25Q128JVSIQ,,, ,',
+    ].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary).toMatchObject({ matched: 1, missing: 0 });
+    expect(body.groups[0]).toMatchObject({
+      status: 'matched',
+      matchedBy: 'model',
+      itemName: 'W25Qxx 16MB flash',
+      stock: 10,
+    });
+  });
+
+  it('同时有 Comment 与 Value 两列时，Value 不会被丢弃', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Qxx 16MB flash',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+
+    // Comment 写元件值，Value 才写型号
+    const csv = [
+      '位号,Comment,Quantity,Footprint,Value',
+      'U1,Flash,1,SOP-8,W25Q128JVSIQ',
+    ].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0]).toMatchObject({
+      matchedBy: 'model',
+      itemName: 'W25Qxx 16MB flash',
+    });
+  });
+
+  it('只有 Value 列、没有 Comment 列时仍能按名称匹配', async () => {
+    await call('POST', '/api/items', {
+      name: '10k 电阻',
+      unit: '个',
+      quantity: 100,
+      lcscCode: 'C25804',
+    });
+
+    const csv = ['位号,Value,Quantity', 'R1,10k 电阻,1'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0].itemName).toBe('10k 电阻');
+  });
+
   it('型号前缀命中多条时返回候选而不是直接判定缺失', async () => {
     await call('POST', '/api/items', {
       name: 'W25Q128JVSIQ 闪存',

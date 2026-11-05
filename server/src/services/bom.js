@@ -11,7 +11,10 @@ import { parseCsv } from './transfer.js';
 
 const HEADER_ALIASES = {
   designator: ['designator', '位号', 'refdes', 'reference', 'references', 'ref', '位号/ref'],
-  name: ['comment', '名称', '元件名称', '物料名称', '元件', 'value', 'partname', 'part name'],
+  name: ['comment', '名称', '元件名称', '物料名称', '元件', 'partname', 'part name'],
+  // 立创 EDA 导出的 BOM 常同时有 Comment 和 Value 两列，内容可能不同：
+  // Comment 写元件值或型号名，Value 写元件值（偶尔才是型号）。两列都读，不要丢。
+  value: ['value', '元件值', '值'],
   lcsc: [
     'lcsc',
     'lcscpart',
@@ -553,6 +556,27 @@ function prefixModelRows(index, candidate) {
   return [...found.values()];
 }
 
+/**
+ * BOM 行里可能写型号的所有字段：厂家型号、Comment、Value。
+ * 立创 EDA 导出的 BOM 经常把型号写在 Comment（如 W25Q128JVSIQ），
+ * 而 Manufacturer Part 留空，此时只能用名称字段去对库内 model。
+ * @returns {string[]} 去重后的非空候选串，已排除 group.model
+ */
+function partNumberCandidatesOf(group) {
+  const model = String(group?.model ?? '').trim();
+  const seen = new Set();
+  const out = [];
+  for (const raw of [group?.name, group?.valueText]) {
+    const text = String(raw ?? '').trim();
+    if (!text || text === model) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
 function candidateOf(row, locations) {
   return {
     itemId: Number(row.id),
@@ -596,6 +620,15 @@ function matchItem(index, group, options) {
     }
   }
 
+  // Manufacturer Part 为空、Comment/Value 直接写型号（如 W25Q128JVSIQ）时，
+  // 名称通道同样要能对到库内 model，否则这类行永远判为缺失。
+  for (const candidate of partNumberCandidatesOf(group)) {
+    const looseRows = prefixModelRows(index, candidate);
+    if (!looseRows || looseRows.length === 0) continue;
+    if (looseRows.length === 1) return { item: looseRows[0], by: 'model' };
+    if (!multiple) multiple = { by: 'model', list: looseRows };
+  }
+
   // 值 + 封装族/尺寸码（可命中多个键）
   if (options.valueMatch && group.valueKeys?.length) {
     const hits = new Map();
@@ -625,9 +658,10 @@ function nearMissesOf(index, group) {
     if (!found.has(Number(row.id))) found.set(Number(row.id), row);
   };
 
-  // 型号前缀近似：BOM 型号与库内型号互为前缀
-  if (group.model) {
-    for (const row of prefixModelRows(index, group.model) ?? []) add(row);
+  // 型号前缀近似：BOM 型号与库内型号互为前缀；Comment/Value 写型号时同样纳入
+  for (const candidate of [group.model, ...partNumberCandidatesOf(group)]) {
+    if (!candidate) continue;
+    for (const row of prefixModelRows(index, candidate) ?? []) add(row);
   }
 
   if (group.valueKeys?.length) {
@@ -651,7 +685,12 @@ function nearMissesOf(index, group) {
 /** 按料号 / 名称+封装+型号 合并同名行 */
 function groupRows(rows) {
   const index = headerIndex(rows[0]);
-  if (index.name === undefined && index.lcsc === undefined && index.model === undefined) {
+  if (
+    index.name === undefined &&
+    index.value === undefined &&
+    index.lcsc === undefined &&
+    index.model === undefined
+  ) {
     throw ERROR.validation('BOM 缺少「名称」或「立创料号」列，无法匹配');
   }
 
@@ -660,7 +699,10 @@ function groupRows(rows) {
   for (let i = 1; i < rows.length; i += 1) {
     line = i + 1;
     const cells = rows[i];
-    const name = cell(cells, index, 'name');
+    // Comment 为空时退用 Value，避免只有 Value 列的 BOM 整列丢失
+    const comment = cell(cells, index, 'name');
+    const valueText = cell(cells, index, 'value');
+    const name = comment || valueText;
     const lcscCode = cell(cells, index, 'lcsc').toUpperCase().match(/C\d{4,10}/)?.[0] ?? '';
     const model = cell(cells, index, 'model');
     if (!name && !lcscCode && !model) continue;
@@ -681,6 +723,7 @@ function groupRows(rows) {
       if (!existing.package) existing.package = pkg;
       if (!existing.voltage) existing.voltage = cell(cells, index, 'voltage');
       if (!existing.model) existing.model = model;
+      if (!existing.valueText) existing.valueText = valueText;
       if (!existing.valueKeys?.length) existing.valueKeys = valueKeysOf(name, existing.package);
       continue;
     }
@@ -689,6 +732,7 @@ function groupRows(rows) {
       key,
       line,
       name,
+      valueText,
       lcscCode: lcscCode || '',
       model,
       package: pkg,
@@ -899,6 +943,7 @@ export function matchGroups(db, groups, input = {}) {
       matchKeys: keys,
       line: group.line,
       name: group.name || item?.name || '',
+      value: group.valueText || null,
       lcscCode: group.lcscCode || item?.lcsc_code || null,
       model: group.model || item?.model || null,
       package: group.package || item?.package || null,
@@ -991,6 +1036,8 @@ export function rematchGroups(db, groups, input = {}) {
       key: String(group.key ?? `row:${index + 1}`).slice(0, 400),
       line: Number(group.line) || index + 2,
       name,
+      // 回传分组时 Value 列可能被前端原样带回，保留以便覆盖重算时仍能按料号匹配
+      valueText: String(group.value ?? group.valueText ?? '').slice(0, 200),
       lcscCode: String(group.lcscCode ?? '').slice(0, 40),
       model: String(group.model ?? '').slice(0, 200),
       package: pkg,
