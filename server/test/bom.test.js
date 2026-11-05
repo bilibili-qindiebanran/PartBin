@@ -342,6 +342,151 @@ describe('BOM 匹配', () => {
     expect(body.groups[0].matchedBy).toBe('model');
   });
 
+  it('型号宽松匹配：BOM 写短型号 W25Q128JV，库里是 W25Q128JVSIQ 也能命中', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 30,
+      model: 'W25Q128JVSIQ',
+      package: 'SOP-8',
+    });
+
+    const csv = ['位号,名称,数量,封装,型号', 'U1,W25Q128JVSIQ,1,SOP-8,W25Q128JV'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary).toMatchObject({ matched: 1, missing: 0, ambiguous: 0 });
+    expect(body.groups[0]).toMatchObject({
+      status: 'matched',
+      matchedBy: 'model',
+      itemName: 'W25Q128JVSIQ 闪存',
+    });
+  });
+
+  it('型号宽松匹配支持分隔符差异（W25Q128JV-SIQ ↔ W25Q128JVSIQ）', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+
+    const csv = ['位号,名称,数量,型号', 'U1,Flash,1,w25q128jv-siq'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0].matchedBy).toBe('model');
+  });
+
+  it('Comment 直接写型号、Manufacturer Part 为空时也能命中库内型号', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Qxx 16MB flash',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+      package: 'SOP-8',
+    });
+
+    // 立创 EDA 导出：Comment=型号名，Value 与 Manufacturer Part 都为空
+    const csv = [
+      'No.,Quantity,Comment,Designator,Footprint,Value,Manufacturer Part',
+      '4,1,W25Q128JVSIQ,,, ,',
+    ].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary).toMatchObject({ matched: 1, missing: 0 });
+    expect(body.groups[0]).toMatchObject({
+      status: 'matched',
+      matchedBy: 'model',
+      itemName: 'W25Qxx 16MB flash',
+      stock: 10,
+    });
+  });
+
+  it('同时有 Comment 与 Value 两列时，Value 不会被丢弃', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Qxx 16MB flash',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+
+    // Comment 写元件值，Value 才写型号
+    const csv = [
+      '位号,Comment,Quantity,Footprint,Value',
+      'U1,Flash,1,SOP-8,W25Q128JVSIQ',
+    ].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0]).toMatchObject({
+      matchedBy: 'model',
+      itemName: 'W25Qxx 16MB flash',
+    });
+  });
+
+  it('只有 Value 列、没有 Comment 列时仍能按名称匹配', async () => {
+    await call('POST', '/api/items', {
+      name: '10k 电阻',
+      unit: '个',
+      quantity: 100,
+      lcscCode: 'C25804',
+    });
+
+    const csv = ['位号,Value,Quantity', 'R1,10k 电阻,1'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0].itemName).toBe('10k 电阻');
+  });
+
+  it('型号前缀命中多条时返回候选而不是直接判定缺失', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSSIQ 闪存',
+      unit: '个',
+      quantity: 5,
+      model: 'W25Q128JVSSIQ',
+    });
+
+    const csv = ['位号,名称,数量,型号', 'U1,Flash,1,W25Q128JV'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.ambiguous).toBe(1);
+    expect(body.groups[0].status).toBe('ambiguous');
+    expect(body.groups[0].candidates.map((item) => item.model).sort()).toEqual([
+      'W25Q128JVSIQ',
+      'W25Q128JVSSIQ',
+    ]);
+  });
+
+  it('不像料号的短名称不会被前缀匹配误命中', async () => {
+    await call('POST', '/api/items', {
+      name: '0603 40K',
+      unit: '个',
+      quantity: 50,
+      package: '0603',
+      model: '0603WAF4002T5E',
+    });
+
+    const csv = ['位号,名称,数量,封装,型号', 'R1,电阻,1,0603,0603'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(0);
+    expect(body.summary.missing).toBe(1);
+  });
+
   it('库内多条同值同封装时返回候选而不是直接缺失', async () => {
     await call('POST', '/api/items', { name: '0603 15pF 50V', unit: '个', quantity: 50, package: '0603' });
     await call('POST', '/api/items', { name: '0603 15pF 100V', unit: '个', quantity: 20, package: '0603' });
@@ -522,6 +667,141 @@ describe('BOM 匹配', () => {
       payload: { ids: [1] },
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  describe('生产扣料', () => {
+    it('按套数扣减已匹配物料，并写一条出库流水', async () => {
+      const seeded = await seed();
+
+      const preview = await call('POST', '/api/bom/preview', { csvText: CSV, sets: 2 });
+      const rows = preview.json().groups;
+      const resistorRow = rows.find((row) => row.itemId === seeded.resistor.id);
+      expect(resistorRow).toMatchObject({ status: 'matched', demand: 6 });
+
+      const res = await call('POST', '/api/bom/consume', {
+        groups: rows,
+        sets: 2,
+        options: { ...preview.json().options },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const body = res.json();
+      // 电阻与电容都命中，U1 不存在被跳过
+      expect(body.consumed).toHaveLength(2);
+      expect(body.consumed[0]).toMatchObject({
+        itemId: seeded.resistor.id,
+        name: seeded.resistor.name,
+        quantity: 6,
+        balanceAfter: 94,
+      });
+      expect(body.consumed[1]).toMatchObject({
+        itemId: seeded.capacitor.id,
+        quantity: 4,
+        balanceAfter: 1,
+      });
+      expect(body.deduction).toMatchObject({ items: 2, totalQuantity: 10, sets: 2 });
+      expect(body.deduction.skipped).toBe(1);
+
+      // 返回的报告已经用扣减后的库存重算
+      const refreshed = body.groups.find((row) => row.itemId === seeded.resistor.id);
+      expect(refreshed).toMatchObject({ stock: 94, shortage: 0, setsPossible: 31 });
+
+      const movements = await call('GET', `/api/items/${seeded.resistor.id}/movements`);
+      const latest = movements.json().data[0];
+      expect(latest).toMatchObject({ type: 'out', quantity: 6, balanceAfter: 94 });
+      expect(latest.note).toContain('BOM 生产扣料');
+      expect(latest.note).toContain('2 套');
+    });
+
+    it('任一物料库存不足时整体回滚，库存不变', async () => {
+      const seeded = await seed();
+
+      // 电容库存 5，本次需要 2 × 3 = 6
+      const preview = await call('POST', '/api/bom/preview', { csvText: CSV, sets: 3 });
+      const res = await call('POST', '/api/bom/consume', {
+        groups: preview.json().groups,
+        sets: 3,
+        options: { ...preview.json().options },
+      });
+
+      expect(res.statusCode).toBe(409);
+      const error = res.json().error;
+      expect(error.code).toBe('INSUFFICIENT_STOCK');
+      expect(error.details.total).toBe(1);
+      expect(error.details.problems[0]).toMatchObject({
+        itemId: seeded.capacitor.id,
+        name: seeded.capacitor.name,
+      });
+      expect(error.details.problems[0].reason).toContain('库存不足');
+
+      const items = await call('GET', '/api/items?pageSize=100');
+      const capacitor = items.json().data.find((row) => row.id === seeded.capacitor.id);
+      expect(capacitor.quantity).toBe(5);
+
+      const movements = await call('GET', `/api/items/${seeded.capacitor.id}/movements`);
+      // seed 时创建物料会写一条初始入库流水，这里只关心有没有出库
+      expect(movements.json().data.filter((row) => row.type === 'out')).toHaveLength(0);
+    });
+
+    it('多行指向同一物料时合并成一次扣减', async () => {
+      const created = await call('POST', '/api/items', {
+        name: '0603 40K',
+        unit: '个',
+        quantity: 50,
+        package: '0603',
+      });
+      const itemId = created.json().item.id;
+
+      const csv = ['位号,名称,数量,封装', 'R1,甲元件,1,0603', 'R2,乙元件,2,0603'].join('\n');
+      const preview = await call('POST', '/api/bom/preview', { csvText: csv });
+      const rows = preview.json().groups;
+      expect(rows).toHaveLength(2);
+
+      const res = await call('POST', '/api/bom/consume', {
+        groups: rows,
+        sets: 2,
+        overrides: rows.map((row) => ({ key: row.matchKey, itemId })),
+      });
+      expect(res.statusCode).toBe(200);
+
+      const body = res.json();
+      expect(body.consumed).toHaveLength(1);
+      // (1 + 2) 单套 × 2 套
+      expect(body.consumed[0]).toMatchObject({ itemId, quantity: 6, balanceAfter: 44 });
+      expect(body.deduction.totalQuantity).toBe(6);
+      expect(body.deduction.skipped).toBe(0);
+    });
+
+    it('没有可扣减的物料时报 400', async () => {
+      await seed();
+      const csv = ['位号,名称,数量,封装', 'U1,不存在的芯片,1,SOP-8'].join('\n');
+      const preview = await call('POST', '/api/bom/preview', { csvText: csv });
+
+      const res = await call('POST', '/api/bom/consume', {
+        groups: preview.json().groups,
+        sets: 1,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('没有可扣减');
+    });
+
+    it('只读账号不能扣减库存', async () => {
+      const reader = await createUserAccount(ctx, 'reader3');
+      const seeded = await seed();
+      const preview = await call('POST', '/api/bom/preview', { csvText: CSV, sets: 1 });
+
+      const res = await request(ctx.app, {
+        method: 'POST',
+        url: '/api/bom/consume',
+        cookie: reader.cookie,
+        payload: { groups: preview.json().groups, sets: 1 },
+      });
+      expect(res.statusCode).toBe(403);
+
+      const items = await call('GET', '/api/items?pageSize=100');
+      const resistor = items.json().data.find((row) => row.id === seeded.resistor.id);
+      expect(resistor.quantity).toBe(100);
+    });
   });
 
   it('缺少关键列时报 400', async () => {

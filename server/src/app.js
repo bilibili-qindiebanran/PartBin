@@ -31,6 +31,7 @@ import inviteRoutes from './routes/invites.routes.js';
 import binRoutes from './routes/bins.routes.js';
 import lcscRoutes from './routes/lcsc.routes.js';
 import bomRoutes from './routes/bom.routes.js';
+import edaRoutes from './routes/eda.routes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -79,6 +80,10 @@ export async function buildApp(overrides = {}) {
     lcsc: createRateLimiter({ limit: 30, windowMs: 5 * 60 * 1000 }),
     // BOM 人工对应关系：同管理员 60 次/5 分钟，防脚本批量灌入
     bomAlias: createRateLimiter({ limit: 60, windowMs: 5 * 60 * 1000 }),
+    // BOM 生产扣料：同管理员 20 次/5 分钟，扣库存属于低频重操作
+    bomConsume: createRateLimiter({ limit: 20, windowMs: 5 * 60 * 1000 }),
+    // EDA 插件查料：同 IP 120 次/分钟（插件一次请求最多 500 条，按 500 分片）
+    eda: createRateLimiter({ limit: 120, windowMs: 60 * 1000 }),
   });
 
   // 统一安全响应头（CSP、HSTS、COOP/CORP 等）
@@ -92,6 +97,8 @@ export async function buildApp(overrides = {}) {
   // 同源校验：带 Origin 的状态变更请求必须与当前 Host 一致（防御 CSRF）
   app.addHook('onRequest', async (request) => {
     if (!MUTATING_METHODS.has(request.method)) return;
+    // EDA 插件用 X-Api-Key 鉴权且必须跨域，不能套用 Cookie 会话的同源规则
+    if (request.url.startsWith('/api/eda/')) return;
     const fetchSite = request.headers['sec-fetch-site'];
     if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
       throw new AppError('FORBIDDEN', 403, '请求来源不合法');
@@ -191,6 +198,7 @@ export async function buildApp(overrides = {}) {
   await app.register(binRoutes);
   await app.register(lcscRoutes);
   await app.register(bomRoutes);
+  await app.register(edaRoutes);
   // 生产模式：托管 web/dist；开发模式由 Vite 提供前端
   const indexHtml = path.join(config.webDist, 'index.html');
   const hasWebBuild = fs.existsSync(indexHtml);

@@ -1,17 +1,22 @@
+import { withTransaction } from '../db/connection.js';
 import { ERROR } from '../lib/errors.js';
 import { buildPathMap } from '../lib/tree.js';
 import { isZipBuffer, readXlsxRows } from '../lib/xlsx.js';
 import { loadAliasMap } from './bom-alias.js';
+import { applyMovement } from './movements.js';
 import { parseCsv } from './transfer.js';
 
 /**
  * BOM 匹配：把 BOM 的每一行对应到本地物料，算出需求、库存、缺口与可支持套数。
- * 只读操作，不写任何流水。
+ * 匹配与覆盖重算只读；仅 consumeBom（按套数扣料）会写库存与流水。
  */
 
 const HEADER_ALIASES = {
   designator: ['designator', '位号', 'refdes', 'reference', 'references', 'ref', '位号/ref'],
-  name: ['comment', '名称', '元件名称', '物料名称', '元件', 'value', 'partname', 'part name'],
+  name: ['comment', '名称', '元件名称', '物料名称', '元件', 'partname', 'part name'],
+  // 立创 EDA 导出的 BOM 常同时有 Comment 和 Value 两列，内容可能不同：
+  // Comment 写元件值或型号名，Value 写元件值（偶尔才是型号）。两列都读，不要丢。
+  value: ['value', '元件值', '值'],
   lcsc: [
     'lcsc',
     'lcscpart',
@@ -55,6 +60,8 @@ const HEADER_ALIASES = {
 const MAX_ROWS = 10000;
 const MAX_CANDIDATES = 8;
 const MAX_NEAR_MISSES = 3;
+/** 型号宽松匹配的最短长度：太短的串（0603、10K）不做前缀匹配，避免一片误命中 */
+const MODEL_MIN_LENGTH = 6;
 
 /** 匹配选项默认值；前端可逐项覆盖 */
 export const DEFAULT_MATCH_OPTIONS = Object.freeze({
@@ -179,6 +186,31 @@ function normalizeParam(value) {
     .toLowerCase()
     .replace(/\s+/g, '')
     .replace(/[（）()]/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// 型号归一化与宽松匹配
+// ---------------------------------------------------------------------------
+
+/**
+ * 型号归一：去大小写、空白与常见分隔符。
+ * W25Q128JV-SIQ / W25Q128JVSIQ / w25q128jv 归一后都是同一个键。
+ */
+function normalizeModelKey(value) {
+  return String(value ?? '')
+    .toUpperCase()
+    .replace(/[\s\-_/.,;:＋()\uff08\uff09\[\]]+/g, '');
+}
+
+/**
+ * 只有「像料号」的串才做前缀匹配：必须同时含字母和数字。
+ * 这样可以避免把「10k 电阻」「0603」这类名称当成型号去模糊命中一大片。
+ */
+function looksLikePartNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (raw.length < MODEL_MIN_LENGTH) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9\s\-_/.,+]*$/.test(raw)) return false;
+  return /[A-Za-z]/.test(raw) && /\d/.test(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +466,8 @@ function buildItemIndex(db, options) {
   const byModel = new Map();
   const byName = new Map();
   const byValue = new Map();
+  /** 归一型号 → 物料行，供前缀宽松匹配使用 */
+  const byModelLoose = new Map();
 
   const push = (map, key, row) => {
     const normalized = String(key ?? '').trim().toLowerCase();
@@ -448,6 +482,14 @@ function buildItemIndex(db, options) {
     push(byCode, row.code, row);
     push(byModel, row.model, row);
     push(byName, row.name, row);
+
+    const modelKey = normalizeModelKey(row.model);
+    if (modelKey.length >= MODEL_MIN_LENGTH) {
+      const list = byModelLoose.get(modelKey) ?? [];
+      list.push(row);
+      byModelLoose.set(modelKey, list);
+    }
+
     for (const valueKey of valueKeysOf(`${row.name ?? ''} ${row.model ?? ''}`, row.package, true)) {
       const list = byValue.get(valueKey) ?? [];
       list.push(row);
@@ -455,7 +497,86 @@ function buildItemIndex(db, options) {
     }
   }
 
-  return { rows, pool, byId, byLcsc, byCode, byModel, byName, byValue };
+  // 已排序的归一型号键，二分定位前缀区间
+  const modelKeys = [...byModelLoose.keys()].sort();
+
+  return {
+    rows,
+    pool,
+    byId,
+    byLcsc,
+    byCode,
+    byModel,
+    byName,
+    byValue,
+    byModelLoose,
+    modelKeys,
+  };
+}
+
+/**
+ * 型号宽松匹配：精确相等失败后再试一次。
+ * 覆盖两类常见写法差异：
+ * - BOM 写短型号 W25Q128JV，库里是完整型号 W25Q128JVSIQ（库内型号以查询串开头）
+ * - BOM 写完整型号，库里记的是短型号（查询串以库内型号开头）
+ * @returns {object[] | null} null 表示命中过多（型号太泛），宁可当作未命中
+ */
+function prefixModelRows(index, candidate) {
+  if (!looksLikePartNumber(candidate)) return [];
+  const needle = normalizeModelKey(candidate);
+  if (needle.length < MODEL_MIN_LENGTH) return [];
+
+  const found = new Map();
+  const addRows = (rows) => {
+    for (const row of rows) {
+      found.set(Number(row.id), row);
+      if (found.size > MAX_CANDIDATES) return false;
+    }
+    return true;
+  };
+
+  // 库内型号以查询串开头：二分找到下界后线性扫描
+  let lo = 0;
+  let hi = index.modelKeys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (index.modelKeys[mid] < needle) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < index.modelKeys.length; i += 1) {
+    const key = index.modelKeys[i];
+    if (!key.startsWith(needle)) break;
+    if (!addRows(index.byModelLoose.get(key))) return null;
+  }
+
+  // 查询串以库内型号开头：逐个前缀长度查表，长度写在前面才能优先选到更长的型号
+  for (let len = needle.length - 1; len >= MODEL_MIN_LENGTH; len -= 1) {
+    const rows = index.byModelLoose.get(needle.slice(0, len));
+    if (rows && !addRows(rows)) return null;
+  }
+
+  return [...found.values()];
+}
+
+/**
+ * BOM 行里可能写型号的所有字段：厂家型号、Comment、Value。
+ * 立创 EDA 导出的 BOM 经常把型号写在 Comment（如 W25Q128JVSIQ），
+ * 而 Manufacturer Part 留空，此时只能用名称字段去对库内 model。
+ * @returns {string[]} 去重后的非空候选串，已排除 group.model
+ */
+function partNumberCandidatesOf(group) {
+  const model = String(group?.model ?? '').trim();
+  const seen = new Set();
+  const out = [];
+  for (const raw of [group?.name, group?.valueText]) {
+    const text = String(raw ?? '').trim();
+    if (!text || text === model) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
 }
 
 function candidateOf(row, locations) {
@@ -492,6 +613,24 @@ function matchItem(index, group, options) {
     if (!multiple) multiple = { by, list };
   }
 
+  // 型号宽松匹配：BOM 写 W25Q128JV、库里是 W25Q128JVSIQ 这类差异靠它兜底
+  if (options.useManufacturerPart && group.model) {
+    const looseRows = prefixModelRows(index, group.model);
+    if (looseRows && looseRows.length === 1) return { item: looseRows[0], by: 'model' };
+    if (looseRows && looseRows.length > 1 && !multiple) {
+      multiple = { by: 'model', list: looseRows };
+    }
+  }
+
+  // Manufacturer Part 为空、Comment/Value 直接写型号（如 W25Q128JVSIQ）时，
+  // 名称通道同样要能对到库内 model，否则这类行永远判为缺失。
+  for (const candidate of partNumberCandidatesOf(group)) {
+    const looseRows = prefixModelRows(index, candidate);
+    if (!looseRows || looseRows.length === 0) continue;
+    if (looseRows.length === 1) return { item: looseRows[0], by: 'model' };
+    if (!multiple) multiple = { by: 'model', list: looseRows };
+  }
+
   // 值 + 封装族/尺寸码（可命中多个键）
   if (options.valueMatch && group.valueKeys?.length) {
     const hits = new Map();
@@ -521,6 +660,12 @@ function nearMissesOf(index, group) {
     if (!found.has(Number(row.id))) found.set(Number(row.id), row);
   };
 
+  // 型号前缀近似：BOM 型号与库内型号互为前缀；Comment/Value 写型号时同样纳入
+  for (const candidate of [group.model, ...partNumberCandidatesOf(group)]) {
+    if (!candidate) continue;
+    for (const row of prefixModelRows(index, candidate) ?? []) add(row);
+  }
+
   if (group.valueKeys?.length) {
     const wanted = new Set(valueSuffixesOf(group.name, true));
     for (const row of index.pool) {
@@ -542,7 +687,12 @@ function nearMissesOf(index, group) {
 /** 按料号 / 名称+封装+型号 合并同名行 */
 function groupRows(rows) {
   const index = headerIndex(rows[0]);
-  if (index.name === undefined && index.lcsc === undefined && index.model === undefined) {
+  if (
+    index.name === undefined &&
+    index.value === undefined &&
+    index.lcsc === undefined &&
+    index.model === undefined
+  ) {
     throw ERROR.validation('BOM 缺少「名称」或「立创料号」列，无法匹配');
   }
 
@@ -551,7 +701,10 @@ function groupRows(rows) {
   for (let i = 1; i < rows.length; i += 1) {
     line = i + 1;
     const cells = rows[i];
-    const name = cell(cells, index, 'name');
+    // Comment 为空时退用 Value，避免只有 Value 列的 BOM 整列丢失
+    const comment = cell(cells, index, 'name');
+    const valueText = cell(cells, index, 'value');
+    const name = comment || valueText;
     const lcscCode = cell(cells, index, 'lcsc').toUpperCase().match(/C\d{4,10}/)?.[0] ?? '';
     const model = cell(cells, index, 'model');
     if (!name && !lcscCode && !model) continue;
@@ -572,6 +725,7 @@ function groupRows(rows) {
       if (!existing.package) existing.package = pkg;
       if (!existing.voltage) existing.voltage = cell(cells, index, 'voltage');
       if (!existing.model) existing.model = model;
+      if (!existing.valueText) existing.valueText = valueText;
       if (!existing.valueKeys?.length) existing.valueKeys = valueKeysOf(name, existing.package);
       continue;
     }
@@ -580,6 +734,7 @@ function groupRows(rows) {
       key,
       line,
       name,
+      valueText,
       lcscCode: lcscCode || '',
       model,
       package: pkg,
@@ -602,6 +757,12 @@ function normalizeText(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+/** 可选的自由文本（备注、批次名）：去首尾空白，超长截断 */
+function optionalNoteText(value, max = 120) {
+  const text = String(value ?? '').trim();
+  return text ? text.slice(0, max) : null;
 }
 
 /** 分层的匹配键：料号 > 厂家料号 > 值+封装族 > 名称；人工对应按此顺序查 */
@@ -790,6 +951,7 @@ export function matchGroups(db, groups, input = {}) {
       matchKeys: keys,
       line: group.line,
       name: group.name || item?.name || '',
+      value: group.valueText || null,
       lcscCode: group.lcscCode || item?.lcsc_code || null,
       model: group.model || item?.model || null,
       package: group.package || item?.package || null,
@@ -855,19 +1017,17 @@ export function matchBom(db, input = {}) {
 }
 
 /**
- * 用回传的分组 + 人工覆盖重新计算（不重新解析文件）。
- * @param {import('node:sqlite').DatabaseSync} db
+ * 校验并归一前端回传的分组（不重新解析文件）。
  * @param {unknown} groups
- * @param {{ sets?: unknown, options?: unknown, overrides?: unknown }} input
  */
-export function rematchGroups(db, groups, input = {}) {
+function normalizeGroupsInput(groups) {
   if (!Array.isArray(groups)) throw ERROR.validation('缺少 BOM 分组数据');
   if (groups.length === 0) throw ERROR.validation('BOM 分组为空');
   if (groups.length > MAX_ROWS) {
     throw ERROR.payloadTooLarge(`BOM 分组超过 ${MAX_ROWS} 组，请拆分后再导入`);
   }
 
-  const normalized = groups.map((group, index) => {
+  return groups.map((group, index) => {
     if (!group || typeof group !== 'object') {
       throw ERROR.validation(`第 ${index + 1} 个分组格式不正确`);
     }
@@ -882,6 +1042,8 @@ export function rematchGroups(db, groups, input = {}) {
       key: String(group.key ?? `row:${index + 1}`).slice(0, 400),
       line: Number(group.line) || index + 2,
       name,
+      // 回传分组时 Value 列可能被前端原样带回，保留以便覆盖重算时仍能按料号匹配
+      valueText: String(group.value ?? group.valueText ?? '').slice(0, 200),
       lcscCode: String(group.lcscCode ?? '').slice(0, 40),
       model: String(group.model ?? '').slice(0, 200),
       package: pkg,
@@ -896,6 +1058,340 @@ export function rematchGroups(db, groups, input = {}) {
       valueKeys: valueKeysOf(name, pkg),
     };
   });
+}
 
-  return matchGroups(db, normalized, input);
+/**
+ * 用回传的分组 + 人工覆盖重新计算（不重新解析文件）。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown} groups
+ * @param {{ sets?: unknown, options?: unknown, overrides?: unknown }} input
+ */
+export function rematchGroups(db, groups, input = {}) {
+  return matchGroups(db, normalizeGroupsInput(groups), input);
+}
+
+// ---------------------------------------------------------------------------
+// BOM 生产扣料
+// ---------------------------------------------------------------------------
+
+/**
+ * 按当前匹配结果扣减库存（出库流水，type=out）。
+ *
+ * 规则：
+ * - 只处理已匹配 / 部分匹配且有 itemId 的行；缺失、有歧义的行跳过
+ * - 扣减量 = 单板用量 × 套数（沿用报告里的 demand）
+ * - 多行映射到同一物料时合并成一次扣减，避免同一次操作被拆成多条流水
+ * - 全部成功或全部失败：任一物料库存不足、或是实例制物料，整体回滚并返回明细
+ * - 扣减后重新匹配，返回最新报告，前端可直接刷新库存与缺口
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown} groups
+ * @param {{
+ *   sets?: unknown, options?: unknown, overrides?: unknown,
+ *   note?: unknown, label?: unknown, userId: number
+ * }} input
+ */
+export function consumeBom(db, groups, input = {}) {
+  const normalized = normalizeGroupsInput(groups);
+  const preview = matchGroups(db, normalized, input);
+
+  const label = optionalNoteText(input.label) ?? optionalNoteText(input.note);
+
+  // 合并同一物料的扣减量
+  const planned = new Map();
+  let skipped = 0;
+  for (const row of preview.groups) {
+    if (!row.itemId || (row.status !== 'matched' && row.status !== 'partial')) {
+      skipped += 1;
+      continue;
+    }
+    const demand = Number(row.demand);
+    if (!Number.isFinite(demand) || demand <= 0) {
+      skipped += 1;
+      continue;
+    }
+
+    const itemId = Number(row.itemId);
+    const existing = planned.get(itemId);
+    if (existing) {
+      existing.quantity += demand;
+    } else {
+      planned.set(itemId, {
+        itemId,
+        quantity: demand,
+        unit: row.unit ?? '个',
+        name: row.itemName || row.name || `#${itemId}`,
+      });
+    }
+  }
+
+  if (planned.size === 0) {
+    throw ERROR.validation('没有可扣减的物料，请先完成匹配或指定物料');
+  }
+
+  // 预检查：库存与跟踪模式，任一不满足则整体拒绝
+  const problems = [];
+  for (const plan of planned.values()) {
+    const row = db
+      .prepare(
+        `SELECT i.id, i.name, i.quantity, i.unit, i.tracking_mode,
+                COALESCE((
+                  SELECT SUM(l.quantity - l.returned_quantity) FROM loan l
+                  WHERE l.item_id = i.id AND l.returned_quantity < l.quantity
+                ), 0) AS lent_quantity
+         FROM item i WHERE i.id = ?`,
+      )
+      .get(plan.itemId);
+    if (!row) {
+      problems.push({ itemId: plan.itemId, name: plan.name, reason: '物料不存在' });
+      continue;
+    }
+    plan.name = row.name;
+    plan.unit = row.unit ?? '个';
+
+    if (row.tracking_mode === 'instance') {
+      problems.push({
+        itemId: plan.itemId,
+        name: row.name,
+        reason: '实例制物料，请到物料详情逐个出库',
+      });
+      continue;
+    }
+
+    const available = Math.max(0, Number(row.quantity) - Number(row.lent_quantity ?? 0));
+    plan.available = available;
+    if (available < plan.quantity) {
+      problems.push({
+        itemId: plan.itemId,
+        name: row.name,
+        reason: `库存不足：可用 ${available} ${row.unit}，需要 ${plan.quantity} ${row.unit}`,
+      });
+    }
+  }
+
+  if (problems.length > 0) {
+    throw ERROR.insufficientStock(
+      `${problems.length} 项物料无法扣减，库存未发生变化`,
+      { problems: problems.slice(0, 20), total: problems.length },
+    );
+  }
+
+  const sets = preview.summary.sets;
+  const noteParts = ['BOM 生产扣料'];
+  if (sets) noteParts.push(`${sets} 套`);
+  if (label) noteParts.push(label);
+  const note = noteParts.join(' · ').slice(0, 500);
+
+  const movements = withTransaction(db, () => {
+    const written = [];
+    for (const plan of planned.values()) {
+      const result = applyMovement(db, {
+        itemId: plan.itemId,
+        type: 'out',
+        quantity: plan.quantity,
+        note,
+        userId: input.userId,
+      });
+      written.push({
+        itemId: plan.itemId,
+        name: plan.name,
+        quantity: plan.quantity,
+        unit: plan.unit,
+        balanceAfter: result.item.quantity,
+      });
+    }
+    return written;
+  });
+
+  // 扣减后重算，前端直接用新库存/缺口刷新表格
+  const report = matchGroups(db, normalized, input);
+
+  return {
+    ...report,
+    consumed: movements,
+    // 不用 summary：那是 matchGroups 的匹配汇总，键名会冲突
+    deduction: {
+      items: movements.length,
+      totalQuantity: movements.reduce((sum, row) => sum + row.quantity, 0),
+      skipped,
+      sets: sets ?? null,
+      note,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// EDA 插件批量查料（只读）
+// 复用上面的封装族归一与电气值归一，但一次请求只建一次索引。
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LOOKUP_LIMIT = 5;
+
+/** 各通道的可信度，仅用于 hits 排序与插件展示 */
+const MATCH_SCORES = {
+  lcsc: 1,
+  model: 0.9,
+  'value+package': 0.8,
+  value: 0.6,
+};
+
+/** 把 EDA 传来的一条器件归一成与 BOM 分组同样的形状 */
+function partGroupOf(part) {
+  const value = String(part?.value ?? '').slice(0, 200).trim();
+  const pkg = String(part?.package ?? '').slice(0, 200).trim();
+  const mpn = String(part?.mpn ?? '').slice(0, 200).trim();
+  const lcsc = String(part?.lcsc ?? '')
+    .toUpperCase()
+    .match(/C\d{4,10}/)?.[0] ?? '';
+
+  return {
+    name: value,
+    lcscCode: lcsc,
+    model: mpn,
+    package: pkg,
+    valueKeys: valueKeysOf(value, pkg),
+    valueSuffixes: valueSuffixesOf(value, true),
+  };
+}
+
+/** 电气值后缀 → 物料（不含封装族），用于「只知道值」时的兜底匹配 */
+function buildValueSuffixIndex(pool) {
+  const map = new Map();
+  for (const row of pool) {
+    for (const suffix of valueSuffixesOf(`${row.name ?? ''} ${row.model ?? ''}`, true)) {
+      const list = map.get(suffix) ?? [];
+      list.push(row);
+      map.set(suffix, list);
+    }
+  }
+  return map;
+}
+
+/**
+ * 匹配链：料号 → 厂家型号 → 值+封装族 → 值。
+ * 唯一命中直接返回；多个命中返回整组候选交给插件让用户挑。
+ */
+function matchPart(index, suffixIndex, group, options) {
+  let fallback = null;
+
+  const settle = (by, list) => {
+    if (list.length === 1) return { rows: list, match: by };
+    if (!fallback) fallback = { rows: list, match: by };
+    return null;
+  };
+
+  const byKey = (map, key) => {
+    const list = map.get(String(key).trim().toLowerCase());
+    return list && list.length > 0 ? list : null;
+  };
+
+  if (group.lcscCode) {
+    const list = byKey(index.byLcsc, group.lcscCode);
+    const settled = list && settle('lcsc', list);
+    if (settled) return settled;
+  }
+
+  if (options.useManufacturerPart && group.model) {
+    const list = byKey(index.byModel, group.model);
+    const settled = list && settle('model', list);
+    if (settled) return settled;
+  }
+
+  // 型号宽松匹配：mpn 写短型号 W25Q128JV、库里是 W25Q128JVSIQ 时靠它兜底
+  if (options.useManufacturerPart) {
+    const looseRows = prefixModelRows(index, group.model || group.name);
+    if (looseRows && looseRows.length > 0) {
+      const settled = settle('model', looseRows);
+      if (settled) return settled;
+    }
+  }
+
+  if (options.valueMatch && group.valueKeys.length > 0) {
+    const rows = new Map();
+    for (const key of group.valueKeys) {
+      for (const row of index.byValue.get(key) ?? []) rows.set(Number(row.id), row);
+    }
+    if (rows.size > 0) {
+      const settled = settle('value+package', [...rows.values()]);
+      if (settled) return settled;
+    }
+  }
+
+  if (options.valueMatch) {
+    // 名称精确匹配优先（IC 这类 value 本身就是型号名），再退回电气值归一
+    if (group.name) {
+      const list = byKey(index.byName, group.name);
+      const settled = list && settle('value', list);
+      if (settled) return settled;
+    }
+
+    if (group.valueSuffixes.length > 0) {
+      const rows = new Map();
+      for (const suffix of group.valueSuffixes) {
+        for (const row of suffixIndex.get(suffix) ?? []) rows.set(Number(row.id), row);
+      }
+      if (rows.size > 0) {
+        const settled = settle('value', [...rows.values()]);
+        if (settled) return settled;
+      }
+    }
+  }
+
+  return fallback ?? { rows: [], match: null };
+}
+
+function lookupHitOf(row, locations, match) {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    lcscCode: row.lcsc_code ?? null,
+    model: row.model ?? null,
+    package: row.package ?? null,
+    quantity: Number(row.quantity),
+    available: row.available,
+    locationPath: locations.pathOf(row.location_id),
+    cellRow: row.cell_row == null ? null : Number(row.cell_row),
+    cellCol: row.cell_col == null ? null : Number(row.cell_col),
+    match,
+    score: MATCH_SCORES[match] ?? 0,
+  };
+}
+
+/**
+ * EDA 插件批量查料：items 每条形如 { ref, lcsc, mpn, value, package }。
+ * 返回 [{ ref, hits }]，ref 原样回传；hits 为空表示未命中，多于 1 条表示多结果。
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {unknown[]} parts
+ * @param {{ options?: unknown, limit?: unknown }} [input]
+ */
+export function lookupParts(db, parts, input = {}) {
+  if (!Array.isArray(parts)) throw ERROR.validation('items 必须是数组');
+
+  const options = resolveOptions(input.options);
+  const rawLimit = Number(input.limit);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(MAX_CANDIDATES, Math.floor(rawLimit))
+    : DEFAULT_LOOKUP_LIMIT;
+
+  const index = buildItemIndex(db, options);
+  const locations = buildLocationMaps(db);
+  const suffixIndex = buildValueSuffixIndex(index.pool);
+
+  return parts.map((part) => {
+    const group = partGroupOf(part);
+    const found = matchPart(index, suffixIndex, group, options);
+
+    const hits = found.rows
+      .slice()
+      .sort(
+        (a, b) => Number(b.available) - Number(a.available) || Number(a.id) - Number(b.id),
+      )
+      .slice(0, limit)
+      .map((row) => lookupHitOf(row, locations, found.match));
+
+    return {
+      ref: part?.ref ?? null,
+      hits: found.match ? hits : [],
+    };
+  });
 }

@@ -20,7 +20,8 @@ function toBool(value, fallback) {
  *   nodeEnv: string, host: string, port: number, dataDir: string,
  *   sessionDays: number, cookieSecure: boolean, trustProxy: boolean,
  *   appTz: string, logLevel: string, backupKeep: number, webDist: string,
- *   lcscApiBase: string, lcscTimeoutMs: number, lcscCacheDays: number
+ *   lcscApiBase: string, lcscTimeoutMs: number, lcscCacheDays: number,
+ *   edaApiKey: string, edaAllowedOrigin: string
  * }}
  */
 const DEV_SECRET = 'dev-only-secret-change-me-32-bytes-min';
@@ -70,5 +71,11 @@ export function loadConfig(overrides = {}) {
     ).trim(),
     lcscTimeoutMs: toInt(overrides.lcscTimeoutMs ?? process.env.LCSC_TIMEOUT_MS, 8000),
     lcscCacheDays: toInt(overrides.lcscCacheDays ?? process.env.LCSC_CACHE_DAYS, 7),
+
+    // EDA 插件只读查料：留空表示不启用该端点（默认关闭，避免空密钥被当成有效密钥）
+    edaApiKey: String(overrides.edaApiKey ?? process.env.EDA_API_KEY ?? '').trim(),
+    // 允许跨域的来源；默认 * 仅暴露 X-Api-Key 鉴权的只读接口
+    edaAllowedOrigin:
+      String(overrides.edaAllowedOrigin ?? process.env.EDA_ALLOWED_ORIGIN ?? '*').trim() || '*',
   };
 }

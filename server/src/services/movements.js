@@ -52,10 +52,10 @@ function toPublicMovement(row) {
 }
 
 /**
- * 唯一入库/出库/盘点入口。
- * 事务内更新 item.quantity 并写入 balance_after；负库存直接拒绝。
+ * 在已开启的事务内写入一条流水并更新库存。
+ * 单独导出给需要批量扣减的场景（如 BOM 生产扣料）复用，避免嵌套事务。
  */
-export function recordMovement(db, input = {}) {
+export function applyMovement(db, input = {}) {
   const itemId = requireId(input.itemId, '物料');
   const type = requireEnum(input.type, '类型', DIRECT_TYPES);
   const quantity = requireInt(input.quantity, '数量', { min: 1, max: 1000000 });
@@ -68,69 +68,75 @@ export function recordMovement(db, input = {}) {
     if (!note) throw ERROR.validation('盘点调整必须填写原因');
   }
 
-  return withTransaction(db, () => {
-    const current = db
-      .prepare('SELECT id, quantity, min_quantity, unit, tracking_mode FROM item WHERE id = ?')
-      .get(itemId);
-    if (!current) throw ERROR.notFound('物料不存在');
-    if (current.tracking_mode === 'instance') {
-      throw ERROR.conflict('实例制物料请通过实例操作调整数量');
-    }
+  const current = db
+    .prepare('SELECT id, quantity, min_quantity, unit, tracking_mode FROM item WHERE id = ?')
+    .get(itemId);
+  if (!current) throw ERROR.notFound('物料不存在');
+  if (current.tracking_mode === 'instance') {
+    throw ERROR.conflict('实例制物料请通过实例操作调整数量');
+  }
 
-    const signed =
-      type === 'adjust'
-        ? direction === 'up'
-          ? quantity
-          : -quantity
-        : type === 'in'
-          ? quantity
-          : -quantity;
+  const signed =
+    type === 'adjust'
+      ? direction === 'up'
+        ? quantity
+        : -quantity
+      : type === 'in'
+        ? quantity
+        : -quantity;
 
-    const balance = Number(current.quantity) + signed;
-    if (balance < 0) {
-      throw ERROR.insufficientStock(
-        `库存不足：当前 ${current.quantity} ${current.unit}，本次需要 ${quantity}`,
-        { current: Number(current.quantity), requested: quantity },
-      );
-    }
-
-    const now = nowIso();
-    db.prepare('UPDATE item SET quantity = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(
-      balance,
-      input.userId,
-      now,
-      itemId,
+  const balance = Number(current.quantity) + signed;
+  if (balance < 0) {
+    throw ERROR.insufficientStock(
+      `库存不足：当前 ${current.quantity} ${current.unit}，本次需要 ${quantity}`,
+      { current: Number(current.quantity), requested: quantity },
     );
+  }
 
-    const inserted = db
+  const now = nowIso();
+  db.prepare('UPDATE item SET quantity = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(
+    balance,
+    input.userId,
+    now,
+    itemId,
+  );
+
+  const inserted = db
+    .prepare(
+      `INSERT INTO movement (
+         item_id, user_id, type, quantity, quantity_delta, balance_after, note, occurred_at, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(itemId, input.userId, type, quantity, signed, balance, note, occurredAt, now);
+
+  const movement = db.prepare('SELECT * FROM movement WHERE id = ?').get(inserted.lastInsertRowid);
+  const lent = Number(
+    db
       .prepare(
-        `INSERT INTO movement (
-           item_id, user_id, type, quantity, quantity_delta, balance_after, note, occurred_at, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        'SELECT COALESCE(SUM(quantity - returned_quantity), 0) AS c FROM loan WHERE item_id = ? AND returned_quantity < quantity',
       )
-      .run(itemId, input.userId, type, quantity, signed, balance, note, occurredAt, now);
+      .get(itemId).c,
+  );
+  const minQuantity = Number(current.min_quantity);
 
-    const movement = db.prepare('SELECT * FROM movement WHERE id = ?').get(inserted.lastInsertRowid);
-    const lent = Number(
-      db
-        .prepare(
-          'SELECT COALESCE(SUM(quantity - returned_quantity), 0) AS c FROM loan WHERE item_id = ? AND returned_quantity < quantity',
-        )
-        .get(itemId).c,
-    );
-    const minQuantity = Number(current.min_quantity);
+  return {
+    movement: toPublicMovement(movement),
+    item: {
+      id: itemId,
+      quantity: balance,
+      available: Math.max(0, balance - lent),
+      lowStock: balance === 0 || (minQuantity > 0 && balance <= minQuantity),
+      unit: current.unit,
+    },
+  };
+}
 
-    return {
-      movement: toPublicMovement(movement),
-      item: {
-        id: itemId,
-        quantity: balance,
-        available: Math.max(0, balance - lent),
-        lowStock: balance === 0 || (minQuantity > 0 && balance <= minQuantity),
-        unit: current.unit,
-      },
-    };
-  });
+/**
+ * 唯一入库/出库/盘点入口。
+ * 事务内更新 item.quantity 并写入 balance_after；负库存直接拒绝。
+ */
+export function recordMovement(db, input = {}) {
+  return withTransaction(db, () => applyMovement(db, input));
 }
 
 /** 单个物料的流水（分页） */
