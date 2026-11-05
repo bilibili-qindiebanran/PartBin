@@ -49,6 +49,13 @@ async function seedItems(ctx, admin) {
   await create({ name: '100nF 50V X7R', unit: '个', quantity: 120, package: '0603' });
   await create({ name: '100nF 50V X5R', unit: '个', quantity: 10, package: '0603' });
   await create({ name: 'CH340C', unit: '个', quantity: 7, package: 'SOP-16' });
+  await create({
+    name: 'W25Q128JVSIQ 闪存',
+    unit: '个',
+    quantity: 30,
+    model: 'W25Q128JVSIQ',
+    package: 'SOP-8',
+  });
 }
 
 describe('EDA 查料接口', () => {
@@ -138,6 +145,28 @@ describe('EDA 查料接口', () => {
       const [row] = res.json().items;
       expect(row.hits).toHaveLength(1);
       expect(row.hits[0].match).toBe('model');
+    });
+
+    it('型号宽松匹配：mpn 写短型号也能命中完整型号', async () => {
+      const res = await lookup(ctx, {
+        items: [{ ref: 'U1', mpn: 'W25Q128JV' }],
+      });
+      const [row] = res.json().items;
+      expect(row.hits).toHaveLength(1);
+      expect(row.hits[0]).toMatchObject({
+        name: 'W25Q128JVSIQ 闪存',
+        model: 'W25Q128JVSIQ',
+        match: 'model',
+      });
+    });
+
+    it('mpn 缺失时用 value 当作料号做宽松匹配', async () => {
+      const res = await lookup(ctx, {
+        items: [{ ref: 'U2', value: 'W25Q128JV-SIQ' }],
+      });
+      const [row] = res.json().items;
+      expect(row.hits).toHaveLength(1);
+      expect(row.hits[0].model).toBe('W25Q128JVSIQ');
     });
 
     it('值 + 封装族归一后命中（40kΩ ↔ 40K / C0603 ↔ 0603）', async () => {

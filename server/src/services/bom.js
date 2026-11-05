@@ -55,6 +55,8 @@ const HEADER_ALIASES = {
 const MAX_ROWS = 10000;
 const MAX_CANDIDATES = 8;
 const MAX_NEAR_MISSES = 3;
+/** 型号宽松匹配的最短长度：太短的串（0603、10K）不做前缀匹配，避免一片误命中 */
+const MODEL_MIN_LENGTH = 6;
 
 /** 匹配选项默认值；前端可逐项覆盖 */
 export const DEFAULT_MATCH_OPTIONS = Object.freeze({
@@ -179,6 +181,31 @@ function normalizeParam(value) {
     .toLowerCase()
     .replace(/\s+/g, '')
     .replace(/[（）()]/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// 型号归一化与宽松匹配
+// ---------------------------------------------------------------------------
+
+/**
+ * 型号归一：去大小写、空白与常见分隔符。
+ * W25Q128JV-SIQ / W25Q128JVSIQ / w25q128jv 归一后都是同一个键。
+ */
+function normalizeModelKey(value) {
+  return String(value ?? '')
+    .toUpperCase()
+    .replace(/[\s\-_/.,;:＋()\uff08\uff09\[\]]+/g, '');
+}
+
+/**
+ * 只有「像料号」的串才做前缀匹配：必须同时含字母和数字。
+ * 这样可以避免把「10k 电阻」「0603」这类名称当成型号去模糊命中一大片。
+ */
+function looksLikePartNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (raw.length < MODEL_MIN_LENGTH) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9\s\-_/.,+]*$/.test(raw)) return false;
+  return /[A-Za-z]/.test(raw) && /\d/.test(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +461,8 @@ function buildItemIndex(db, options) {
   const byModel = new Map();
   const byName = new Map();
   const byValue = new Map();
+  /** 归一型号 → 物料行，供前缀宽松匹配使用 */
+  const byModelLoose = new Map();
 
   const push = (map, key, row) => {
     const normalized = String(key ?? '').trim().toLowerCase();
@@ -448,6 +477,14 @@ function buildItemIndex(db, options) {
     push(byCode, row.code, row);
     push(byModel, row.model, row);
     push(byName, row.name, row);
+
+    const modelKey = normalizeModelKey(row.model);
+    if (modelKey.length >= MODEL_MIN_LENGTH) {
+      const list = byModelLoose.get(modelKey) ?? [];
+      list.push(row);
+      byModelLoose.set(modelKey, list);
+    }
+
     for (const valueKey of valueKeysOf(`${row.name ?? ''} ${row.model ?? ''}`, row.package, true)) {
       const list = byValue.get(valueKey) ?? [];
       list.push(row);
@@ -455,7 +492,65 @@ function buildItemIndex(db, options) {
     }
   }
 
-  return { rows, pool, byId, byLcsc, byCode, byModel, byName, byValue };
+  // 已排序的归一型号键，二分定位前缀区间
+  const modelKeys = [...byModelLoose.keys()].sort();
+
+  return {
+    rows,
+    pool,
+    byId,
+    byLcsc,
+    byCode,
+    byModel,
+    byName,
+    byValue,
+    byModelLoose,
+    modelKeys,
+  };
+}
+
+/**
+ * 型号宽松匹配：精确相等失败后再试一次。
+ * 覆盖两类常见写法差异：
+ * - BOM 写短型号 W25Q128JV，库里是完整型号 W25Q128JVSIQ（库内型号以查询串开头）
+ * - BOM 写完整型号，库里记的是短型号（查询串以库内型号开头）
+ * @returns {object[] | null} null 表示命中过多（型号太泛），宁可当作未命中
+ */
+function prefixModelRows(index, candidate) {
+  if (!looksLikePartNumber(candidate)) return [];
+  const needle = normalizeModelKey(candidate);
+  if (needle.length < MODEL_MIN_LENGTH) return [];
+
+  const found = new Map();
+  const addRows = (rows) => {
+    for (const row of rows) {
+      found.set(Number(row.id), row);
+      if (found.size > MAX_CANDIDATES) return false;
+    }
+    return true;
+  };
+
+  // 库内型号以查询串开头：二分找到下界后线性扫描
+  let lo = 0;
+  let hi = index.modelKeys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (index.modelKeys[mid] < needle) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < index.modelKeys.length; i += 1) {
+    const key = index.modelKeys[i];
+    if (!key.startsWith(needle)) break;
+    if (!addRows(index.byModelLoose.get(key))) return null;
+  }
+
+  // 查询串以库内型号开头：逐个前缀长度查表，长度写在前面才能优先选到更长的型号
+  for (let len = needle.length - 1; len >= MODEL_MIN_LENGTH; len -= 1) {
+    const rows = index.byModelLoose.get(needle.slice(0, len));
+    if (rows && !addRows(rows)) return null;
+  }
+
+  return [...found.values()];
 }
 
 function candidateOf(row, locations) {
@@ -492,6 +587,15 @@ function matchItem(index, group, options) {
     if (!multiple) multiple = { by, list };
   }
 
+  // 型号宽松匹配：BOM 写 W25Q128JV、库里是 W25Q128JVSIQ 这类差异靠它兜底
+  if (options.useManufacturerPart && group.model) {
+    const looseRows = prefixModelRows(index, group.model);
+    if (looseRows && looseRows.length === 1) return { item: looseRows[0], by: 'model' };
+    if (looseRows && looseRows.length > 1 && !multiple) {
+      multiple = { by: 'model', list: looseRows };
+    }
+  }
+
   // 值 + 封装族/尺寸码（可命中多个键）
   if (options.valueMatch && group.valueKeys?.length) {
     const hits = new Map();
@@ -520,6 +624,11 @@ function nearMissesOf(index, group) {
     if (found.size >= MAX_CANDIDATES) return;
     if (!found.has(Number(row.id))) found.set(Number(row.id), row);
   };
+
+  // 型号前缀近似：BOM 型号与库内型号互为前缀
+  if (group.model) {
+    for (const row of prefixModelRows(index, group.model) ?? []) add(row);
+  }
 
   if (group.valueKeys?.length) {
     const wanted = new Set(valueSuffixesOf(group.name, true));
@@ -975,6 +1084,15 @@ function matchPart(index, suffixIndex, group, options) {
     const list = byKey(index.byModel, group.model);
     const settled = list && settle('model', list);
     if (settled) return settled;
+  }
+
+  // 型号宽松匹配：mpn 写短型号 W25Q128JV、库里是 W25Q128JVSIQ 时靠它兜底
+  if (options.useManufacturerPart) {
+    const looseRows = prefixModelRows(index, group.model || group.name);
+    if (looseRows && looseRows.length > 0) {
+      const settled = settle('model', looseRows);
+      if (settled) return settled;
+    }
   }
 
   if (options.valueMatch && group.valueKeys.length > 0) {

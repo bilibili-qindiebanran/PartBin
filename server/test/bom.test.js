@@ -342,6 +342,86 @@ describe('BOM 匹配', () => {
     expect(body.groups[0].matchedBy).toBe('model');
   });
 
+  it('型号宽松匹配：BOM 写短型号 W25Q128JV，库里是 W25Q128JVSIQ 也能命中', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 30,
+      model: 'W25Q128JVSIQ',
+      package: 'SOP-8',
+    });
+
+    const csv = ['位号,名称,数量,封装,型号', 'U1,W25Q128JVSIQ,1,SOP-8,W25Q128JV'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary).toMatchObject({ matched: 1, missing: 0, ambiguous: 0 });
+    expect(body.groups[0]).toMatchObject({
+      status: 'matched',
+      matchedBy: 'model',
+      itemName: 'W25Q128JVSIQ 闪存',
+    });
+  });
+
+  it('型号宽松匹配支持分隔符差异（W25Q128JV-SIQ ↔ W25Q128JVSIQ）', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+
+    const csv = ['位号,名称,数量,型号', 'U1,Flash,1,w25q128jv-siq'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(1);
+    expect(body.groups[0].matchedBy).toBe('model');
+  });
+
+  it('型号前缀命中多条时返回候选而不是直接判定缺失', async () => {
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSIQ 闪存',
+      unit: '个',
+      quantity: 10,
+      model: 'W25Q128JVSIQ',
+    });
+    await call('POST', '/api/items', {
+      name: 'W25Q128JVSSIQ 闪存',
+      unit: '个',
+      quantity: 5,
+      model: 'W25Q128JVSSIQ',
+    });
+
+    const csv = ['位号,名称,数量,型号', 'U1,Flash,1,W25Q128JV'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.ambiguous).toBe(1);
+    expect(body.groups[0].status).toBe('ambiguous');
+    expect(body.groups[0].candidates.map((item) => item.model).sort()).toEqual([
+      'W25Q128JVSIQ',
+      'W25Q128JVSSIQ',
+    ]);
+  });
+
+  it('不像料号的短名称不会被前缀匹配误命中', async () => {
+    await call('POST', '/api/items', {
+      name: '0603 40K',
+      unit: '个',
+      quantity: 50,
+      package: '0603',
+      model: '0603WAF4002T5E',
+    });
+
+    const csv = ['位号,名称,数量,封装,型号', 'R1,电阻,1,0603,0603'].join('\n');
+    const res = await call('POST', '/api/bom/preview', { csvText: csv });
+
+    const body = res.json();
+    expect(body.summary.matched).toBe(0);
+    expect(body.summary.missing).toBe(1);
+  });
+
   it('库内多条同值同封装时返回候选而不是直接缺失', async () => {
     await call('POST', '/api/items', { name: '0603 15pF 50V', unit: '个', quantity: 50, package: '0603' });
     await call('POST', '/api/items', { name: '0603 15pF 100V', unit: '个', quantity: 20, package: '0603' });
